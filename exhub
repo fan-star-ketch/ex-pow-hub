@@ -1,0 +1,364 @@
+-- Developer Mod Menu (UI Only, Safe for your own game)
+-- Includes Fly, Noclip, ESP, Speed/Jump controls and more
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Name = "ModMenu"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+--------------------------------------------------
+-- UI HELPERS
+--------------------------------------------------
+
+local function styleFrame(f, bg, radius)
+	f.BackgroundColor3 = bg
+	f.BackgroundTransparency = 0.2
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius or 12)
+	corner.Parent = f
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2
+	stroke.Color = Color3.fromRGB(70, 70, 70)
+	stroke.Parent = f
+end
+
+-- Main Panel
+local panel = Instance.new("Frame")
+panel.Size = UDim2.fromOffset(340, 450)
+panel.Position = UDim2.new(0.3, 0, 0.2, 0)
+styleFrame(panel, Color3.fromRGB(25,25,25), 14)
+panel.Active = true
+panel.Draggable = not UIS.TouchEnabled
+panel.Parent = gui
+
+-- Title bar
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1,0,0,40)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.Text = "MOD MENU"
+title.TextSize = 22
+title.TextColor3 = Color3.fromRGB(255,255,255)
+title.Parent = panel
+
+-- Tab bar
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1,0,0,40)
+tabBar.Position = UDim2.new(0,0,0,40)
+tabBar.BackgroundTransparency = 1
+tabBar.Parent = panel
+
+local tabLayout = Instance.new("UIListLayout", tabBar)
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.Padding = UDim.new(0,6)
+
+-- Content container
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1,-20,1,-90)
+contentFrame.Position = UDim2.new(0,10,0,80)
+contentFrame.BackgroundTransparency = 1
+contentFrame.ClipsDescendants = true
+contentFrame.Parent = panel
+
+local pages = Instance.new("UIPageLayout", contentFrame)
+pages.FillDirection = Enum.FillDirection.Horizontal
+pages.Padding = UDim.new(0,15)
+pages.EasingStyle = Enum.EasingStyle.Quad
+pages.TweenTime = 0.3
+
+-- Tab Creator
+local function createTab(name)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0,100,1,0)
+	btn.Font = Enum.Font.GothamBold
+	btn.Text = name
+	btn.TextSize = 16
+	btn.BackgroundColor3 = Color3.fromRGB(45,45,45)
+	btn.TextColor3 = Color3.fromRGB(200,200,200)
+	styleFrame(btn, Color3.fromRGB(45,45,45), 8)
+	btn.Parent = tabBar
+	
+	local page = Instance.new("Frame")
+	page.Size = UDim2.new(1,0,1,0)
+	page.BackgroundTransparency = 1
+	page.Name = name
+	page.Parent = contentFrame
+	
+	btn.MouseButton1Click:Connect(function()
+		pages:JumpTo(page)
+	end)
+	
+	return page
+end
+
+-- Tabs
+local mainTab = createTab("Main")
+local adminTab = createTab("Admin")
+local funTab = createTab("Fun")
+
+--------------------------------------------------
+-- UI ELEMENT MAKERS
+--------------------------------------------------
+
+local function addButton(parent, text, callback)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 40)
+	btn.Position = UDim2.new(0,5,0, #parent:GetChildren()*45)
+	btn.Font = Enum.Font.Gotham
+	btn.Text = text
+	btn.TextSize = 18
+	btn.TextColor3 = Color3.fromRGB(255,255,255)
+	styleFrame(btn, Color3.fromRGB(60,60,60), 10)
+	btn.Parent = parent
+	btn.MouseButton1Click:Connect(callback)
+end
+
+local function addToggle(parent, text, stateChanged)
+	local state = false
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 40)
+	btn.Position = UDim2.new(0,5,0, #parent:GetChildren()*45)
+	btn.Font = Enum.Font.Gotham
+	btn.Text = text .. ": OFF"
+	btn.TextSize = 18
+	btn.TextColor3 = Color3.fromRGB(255,255,255)
+	styleFrame(btn, Color3.fromRGB(60,60,60), 10)
+	btn.Parent = parent
+	
+	btn.MouseButton1Click:Connect(function()
+		state = not state
+		btn.Text = text .. (state and ": ON" or ": OFF")
+		stateChanged(state)
+	end)
+end
+
+local function addSlider(parent, text, min, max, default, callback)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1,-10,0,60)
+	frame.Position = UDim2.new(0,5,0, #parent:GetChildren()*65)
+	frame.BackgroundTransparency = 1
+	frame.Parent = parent
+	
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1,0,0,20)
+	label.Text = text .. ": " .. tostring(default)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255,255,255)
+	label.Font = Enum.Font.Gotham
+	label.TextSize = 16
+	label.Parent = frame
+	
+	local slider = Instance.new("TextButton")
+	slider.Size = UDim2.new(1,0,0,30)
+	slider.Position = UDim2.new(0,0,0,25)
+	styleFrame(slider, Color3.fromRGB(80,80,80), 8)
+	slider.Text = ""
+	slider.Parent = frame
+	
+	local fill = Instance.new("Frame")
+	fill.BackgroundColor3 = Color3.fromRGB(0,170,255)
+	fill.Size = UDim2.new((default-min)/(max-min),0,1,0)
+	styleFrame(fill, Color3.fromRGB(0,170,255), 8)
+	fill.Parent = slider
+	
+	local value = default
+	local function setValue(x)
+		local percent = math.clamp(x,0,1)
+		value = math.floor(min + (max-min)*percent)
+		fill.Size = UDim2.new(percent,0,1,0)
+		label.Text = text .. ": " .. tostring(value)
+		callback(value)
+	end
+	
+	slider.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			local moveConn
+			moveConn = UIS.InputChanged:Connect(function(i)
+				if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+					local rel = (i.Position.X - slider.AbsolutePosition.X)/slider.AbsoluteSize.X
+					setValue(rel)
+				end
+			end)
+			UIS.InputEnded:Connect(function(i)
+				if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+					if moveConn then moveConn:Disconnect() end
+				end
+			end)
+		end
+	end)
+end
+
+--------------------------------------------------
+-- FEATURES
+--------------------------------------------------
+
+-- Fly
+local flyConn
+addToggle(mainTab, "Fly", function(state)
+	if state then
+		local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid.PlatformStand = true end
+		flyConn = RunService.RenderStepped:Connect(function()
+			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				local move = Vector3.new()
+				if UIS:IsKeyDown(Enum.KeyCode.W) then move += workspace.CurrentCamera.CFrame.LookVector end
+				if UIS:IsKeyDown(Enum.KeyCode.S) then move -= workspace.CurrentCamera.CFrame.LookVector end
+				if UIS:IsKeyDown(Enum.KeyCode.A) then move -= workspace.CurrentCamera.CFrame.RightVector end
+				if UIS:IsKeyDown(Enum.KeyCode.D) then move += workspace.CurrentCamera.CFrame.RightVector end
+				hrp.CFrame += move * 0.8
+			end
+		end)
+	else
+		if flyConn then flyConn:Disconnect() end
+		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid.PlatformStand = false end
+	end
+end)
+
+-- Noclip
+local noclipConn
+addToggle(mainTab, "Noclip", function(state)
+	if state then
+		noclipConn = RunService.Stepped:Connect(function()
+			if player.Character then
+				for _,part in ipairs(player.Character:GetDescendants()) do
+					if part:IsA("BasePart") then part.CanCollide = false end
+				end
+			end
+		end)
+	else
+		if noclipConn then noclipConn:Disconnect() end
+	end
+end)
+
+-- ESP
+local espEnabled = false
+local espCons = {}
+addToggle(mainTab, "ESP", function(state)
+	espEnabled = state
+	if state then
+		for _,plr in ipairs(Players:GetPlayers()) do
+			if plr.Character and not plr.Character:FindFirstChild("ESP_Highlight") then
+				local hl = Instance.new("Highlight")
+				hl.Name = "ESP_Highlight"
+				hl.FillTransparency = 0.7
+				hl.OutlineColor = Color3.fromRGB(0,255,0)
+				hl.Parent = plr.Character
+			end
+		end
+		espCons["PlayerAdded"] = Players.PlayerAdded:Connect(function(plr)
+			espCons[plr] = plr.CharacterAdded:Connect(function(char)
+				local hl = Instance.new("Highlight")
+				hl.Name = "ESP_Highlight"
+				hl.FillTransparency = 0.7
+				hl.OutlineColor = Color3.fromRGB(0,255,0)
+				hl.Parent = char
+			end)
+		end)
+	else
+		for _,plr in ipairs(Players:GetPlayers()) do
+			if plr.Character and plr.Character:FindFirstChild("ESP_Highlight") then
+				plr.Character.ESP_Highlight:Destroy()
+			end
+		end
+		for _,con in pairs(espCons) do if typeof(con)=="RBXScriptConnection" then con:Disconnect() end end
+		espCons = {}
+	end
+end)
+
+-- WalkSpeed
+addSlider(mainTab, "WalkSpeed", 16, 200, 16, function(val)
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then hum.WalkSpeed = val end
+end)
+
+-- JumpPower
+addSlider(mainTab, "JumpPower", 50, 200, 50, function(val)
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then hum.JumpPower = val end
+end)
+
+-- God Mode
+local godConn
+addToggle(mainTab, "God Mode", function(state)
+	if state then
+		godConn = RunService.Heartbeat:Connect(function()
+			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			if hum then hum.Health = hum.MaxHealth end
+		end)
+	else
+		if godConn then godConn:Disconnect() end
+	end
+end)
+
+-- Teleport to Spawn
+addButton(mainTab, "Teleport to Spawn", function()
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	local spawn = workspace:FindFirstChild("SpawnLocation")
+	if hrp and spawn then hrp.CFrame = spawn.CFrame + Vector3.new(0,5,0) end
+end)
+
+-- Teleport to Mouse
+addButton(mainTab, "Teleport to Mouse", function()
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	local mouse = player:GetMouse()
+	if hrp and mouse then hrp.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0,5,0)) end
+end)
+
+--------------------------------------------------
+-- ADMIN TAB
+--------------------------------------------------
+
+addButton(adminTab, "Give Sword", function()
+	local sword = Instance.new("Tool")
+	sword.Name = "Sword"
+	sword.RequiresHandle = true
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(1,4,1)
+	handle.Parent = sword
+	sword.Parent = player.Backpack
+end)
+
+addButton(adminTab, "Spawn Part", function()
+	local part = Instance.new("Part")
+	part.Size = Vector3.new(5,1,5)
+	part.Position = player.Character and player.Character.HumanoidRootPart.Position + Vector3.new(0,5,0)
+	part.Anchored = true
+	part.Parent = workspace
+end)
+
+--------------------------------------------------
+-- FUN TAB
+--------------------------------------------------
+
+-- Rainbow Character
+local rainbowConn
+addToggle(funTab, "Rainbow Character", function(state)
+	if state then
+		rainbowConn = RunService.Heartbeat:Connect(function()
+			if player.Character then
+				for _,part in ipairs(player.Character:GetChildren()) do
+					if part:IsA("BasePart") then
+						part.Color = Color3.fromHSV(tick()%5/5,1,1)
+					end
+				end
+			end
+		end)
+	else
+		if rainbowConn then rainbowConn:Disconnect() end
+	end
+end)
+
+addButton(funTab, "Play Sound", function()
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://12221967"
+	sound.Parent = workspace
+	sound:Play()
+end)
