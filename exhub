@@ -1,1000 +1,1029 @@
--- SX Cyberpunk Exploit Panel (Mobile Friendly, 900+ Lines)
--- LocalScript: place in StarterGui (for testing only in your own place)
--- NOTE: This panel changes client-side properties for debugging.
+--!strict
+-- SX Cyberpunk Panel (Mobile-Friendly, Bugfixed)
+-- Put this as a LocalScript in StarterGui (ONLY use in your own place for testing)
 
--- // SERVICES
-local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
-local RS = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local Lighting = game:GetService("Lighting")
-local StarterGui = game:GetService("StarterGui")
+------------------------------
+-- SERVICES
+------------------------------
+local Players           = game:GetService("Players")
+local UIS               = game:GetService("UserInputService")
+local RS                = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
+local Lighting          = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui        = game:GetService("StarterGui")
+local HttpService       = game:GetService("HttpService")
 
--- // PLAYER
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid")
+------------------------------
+-- PLAYER / CHARACTER
+------------------------------
+local player        = Players.LocalPlayer
+local playerGui     = player:WaitForChild("PlayerGui")
+local character     = player.Character or player.CharacterAdded:Wait()
+local humanoid      = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid")
+local rootPart      = character:WaitForChild("HumanoidRootPart")
 
--- // DEFAULTS
-local DEFAULT_SPEED, MAX_SPEED = 16, 200
-local DEFAULT_JUMP, MAX_JUMP = 50, 300
-local DEFAULT_FOV = 70
+-- keep references updated on respawn
+player.CharacterAdded:Connect(function(char)
+	character = char
+	humanoid  = char:WaitForChild("Humanoid")
+	rootPart  = char:WaitForChild("HumanoidRootPart")
+end)
 
--- // STATE
-local panelLoaded = false
-local panelGui = nil
-local connections = {}
+------------------------------
+-- SETTINGS
+------------------------------
+local DEFAULT_SPEED     = 16
+local MAX_SPEED         = 200
+local DEFAULT_JUMP      = 50
+local MAX_JUMP          = 300
+local DEFAULT_FOV       = 70
+local CYBER_FOV         = 85
+local PANEL_WIDTH       = 460
+local PANEL_HEIGHT      = 640
+local BIG_BUTTON_HEIGHT = 46
 
--- // COLORS (Cyberpunk palette)
-local neonBlue = Color3.fromRGB(0, 255, 255)
-local neonPink = Color3.fromRGB(255, 0, 128)
+------------------------------
+-- THEME (Cyberpunk)
+------------------------------
+local neonBlue   = Color3.fromRGB(0, 255, 255)
+local neonPink   = Color3.fromRGB(255, 0, 128)
 local neonYellow = Color3.fromRGB(255, 255, 0)
-local neonTeal = Color3.fromRGB(0, 255, 200)
-local darkBG = Color3.fromRGB(15, 15, 20)
-local midBG = Color3.fromRGB(28, 28, 36)
+local neonGreen  = Color3.fromRGB(0, 255, 128)
+local darkBG     = Color3.fromRGB(12, 12, 16)
+local panelBG    = Color3.fromRGB(18, 18, 26)
+local barBG      = Color3.fromRGB(8, 8, 12)
 
--- // UTILS
-local function safeDisconnect(conn)
-    if conn then pcall(function() conn:Disconnect() end) end
+------------------------------
+-- STATE
+------------------------------
+local panelGui: ScreenGui? = nil
+local panelVisible = false
+
+-- feature states + connections for cleanup
+local state = {
+	superSpeed      = false,
+	superJump       = false,
+	infJump         = false,
+	noclip          = false,
+	flying          = false,
+	lowGravity      = false,
+	nightVision     = false,
+	neonSkin        = false,
+	fovBoost        = false,
+	cameraShake     = false,
+
+	prevGravity     = workspace.Gravity,
+	flyConn         = nil :: RBXScriptConnection?,
+	noclipConn      = nil :: RBXScriptConnection?,
+	infConn         = nil :: RBXScriptConnection?,
+	shakeConn       = nil :: RBXScriptConnection?,
+	fpsConn         = nil :: RBXScriptConnection?,
+	dragConnMove    = nil :: RBXScriptConnection?,
+	dragConnEnd     = nil :: RBXScriptConnection?,
+	renderLabelConn = nil :: RBXScriptConnection?,
+
+	animTrack       = nil :: AnimationTrack?,
+
+	waypoints       = {} :: { [string]: CFrame },
+
+	ui              = {}   -- will hold refs to UI elements we need to update
+}
+
+------------------------------
+-- HELPERS
+------------------------------
+local function safeHumanoid(): Humanoid?
+	if not humanoid or humanoid.Parent == nil then
+		if player.Character then
+			humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+		end
+	end
+	return humanoid
 end
 
-local function addConn(conn)
-    table.insert(connections, conn)
-    return conn
+local function safeRoot(): BasePart?
+	if not rootPart or rootPart.Parent == nil then
+		if player.Character then
+			rootPart = player.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+		end
+	end
+	return rootPart
 end
 
-local function clearConns()
-    for _,c in ipairs(connections) do safeDisconnect(c) end
-    connections = {}
+local function tween(obj: Instance, props: {[string]: any}, t: number, style: Enum.EasingStyle?, dir: Enum.EasingDirection?)
+	local ti = TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out)
+	local tw = TweenService:Create(obj, ti, props)
+	tw:Play()
+	return tw
 end
 
-local function new(typeName, props, parent)
-    local obj = Instance.new(typeName)
-    if props then
-        for k,v in pairs(props) do
-            obj[k] = v
-        end
-    end
-    if parent then obj.Parent = parent end
-    return obj
+local function makeStroke(inst: Instance, color: Color3, thickness: number)
+	local s = Instance.new("UIStroke")
+	s.Color = color
+	s.Thickness = thickness
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = inst
+	return s
 end
 
-local function corner(obj, r)
-    return new("UICorner", {CornerRadius = UDim.new(0, r)}, obj)
+local function makeCorner(inst: Instance, r: number)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r)
+	c.Parent = inst
+	return c
 end
 
-local function stroke(obj, color, th)
-    return new("UIStroke", {Color = color or neonBlue, Thickness = th or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, obj)
+local function makeGradient(inst: Instance, c1: Color3, c2: Color3)
+	local g = Instance.new("UIGradient")
+	g.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, c1), ColorSequenceKeypoint.new(1, c2) })
+	g.Rotation = 90
+	g.Parent = inst
+	return g
 end
 
-local function padding(obj, p)
-    local pad = new("UIPadding", {}, obj)
-    p = p or 8
-    pad.PaddingTop = UDim.new(0, p)
-    pad.PaddingBottom = UDim.new(0, p)
-    pad.PaddingLeft = UDim.new(0, p)
-    pad.PaddingRight = UDim.new(0, p)
-    return pad
+local function sectionHeader(parent: Instance, text: string)
+	local h = Instance.new("TextLabel")
+	h.BackgroundTransparency = 1
+	h.Size = UDim2.new(1, -20, 0, 26)
+	h.Position = UDim2.new(0, 10, 0, 0)
+	h.Font = Enum.Font.GothamBlack
+	h.TextSize = 16
+	h.TextColor3 = neonYellow
+	h.TextXAlignment = Enum.TextXAlignment.Left
+	h.Text = "—  " .. text
+	h.Parent = parent
+	return h
 end
 
-local function tween(obj, ti, goal)
-    return TweenService:Create(obj, ti, goal)
+local function makeButton(parent: Instance, text: string)
+	local b = Instance.new("TextButton")
+	b.AutoButtonColor = false
+	b.Size = UDim2.new(1, -20, 0, BIG_BUTTON_HEIGHT)
+	b.Position = UDim2.new(0, 10, 0, 0)
+	b.BackgroundColor3 = panelBG
+	b.TextColor3 = neonBlue
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 16
+	b.Text = text
+	makeCorner(b, 10)
+	makeStroke(b, neonPink, 2)
+	makeGradient(b, Color3.fromRGB(20,20,30), Color3.fromRGB(10,10,16))
+	-- hover (PC) + press feedback (works for mobile too)
+	b.MouseEnter:Connect(function() tween(b, {BackgroundColor3 = Color3.fromRGB(30, 10, 30)}, 0.15) end)
+	b.MouseLeave:Connect(function() tween(b, {BackgroundColor3 = panelBG}, 0.15) end)
+	b.MouseButton1Down:Connect(function() tween(b, {TextColor3 = neonYellow}, 0.08) end)
+	b.MouseButton1Up:Connect(function() tween(b, {TextColor3 = neonBlue}, 0.08) end)
+	b.Parent = parent
+	return b
 end
 
-local function logPrint(...)
-    print("[SX]", ...)
+local function makeToggle(parent: Instance, labelText: string, initial: boolean, onChanged: (boolean)->())
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, -20, 0, BIG_BUTTON_HEIGHT)
+	holder.Position = UDim2.new(0, 10, 0, 0)
+	holder.BackgroundColor3 = panelBG
+	makeCorner(holder, 10)
+	makeStroke(holder, neonBlue, 2)
+	holder.Parent = parent
+
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.Size = UDim2.new(1, -110, 1, 0)
+	lbl.Position = UDim2.new(0, 10, 0, 0)
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 16
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextColor3 = neonBlue
+	lbl.Text = labelText
+	lbl.Parent = holder
+
+	local t = Instance.new("TextButton")
+	t.AutoButtonColor = false
+	t.Size = UDim2.new(0, 90, 0, BIG_BUTTON_HEIGHT - 10)
+	t.Position = UDim2.new(1, -100, 0, 5)
+	t.BackgroundColor3 = initial and neonGreen or Color3.fromRGB(40,40,48)
+	t.TextColor3 = Color3.new(0,0,0)
+	t.Font = Enum.Font.GothamBold
+	t.TextSize = 14
+	t.Text = initial and "ON" or "OFF"
+	makeCorner(t, 8)
+	makeStroke(t, neonPink, 2)
+	t.Parent = holder
+
+	local value = initial
+	t.MouseButton1Click:Connect(function()
+		value = not value
+		t.Text = value and "ON" or "OFF"
+		tween(t, {BackgroundColor3 = (value and neonGreen or Color3.fromRGB(40,40,48))}, 0.18)
+		onChanged(value)
+	end)
+
+	return {frame = holder, label = lbl, button = t, get = function() return value end}
 end
 
--- // DRAG (mobile-friendly)
-local function makeDraggable(handle, target)
-    local dragging = false
-    local dragStart, startPos
-    handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = target.Position
-            local conn
-            conn = input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    if conn then conn:Disconnect() end
-                end
-            end)
-        end
-    end)
-    handle.InputChanged:Connect(function(input)
-        if not dragging then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            local delta = input.Position - dragStart
-            target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
+local function makeSlider(parent: Instance, labelText: string, minV: number, maxV: number, defaultV: number, onChanged: (number)->())
+	local cont = Instance.new("Frame")
+	cont.Size = UDim2.new(1, -20, 0, 74)
+	cont.Position = UDim2.new(0, 10, 0, 0)
+	cont.BackgroundTransparency = 1
+	cont.Parent = parent
+
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.Size = UDim2.new(1, 0, 0, 22)
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 14
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextColor3 = neonYellow
+	lbl.Text = labelText .. "  ("..tostring(defaultV)..")"
+	lbl.Parent = cont
+
+	local bar = Instance.new("Frame")
+	bar.Size = UDim2.new(1, 0, 0, 12)
+	bar.Position = UDim2.new(0, 0, 0, 28)
+	bar.BackgroundColor3 = barBG
+	makeCorner(bar, 6)
+	makeStroke(bar, neonPink, 1.5)
+	bar.Parent = cont
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new((defaultV-minV)/(maxV-minV), 0, 1, 0)
+	fill.BackgroundColor3 = neonPink
+	makeCorner(fill, 6)
+	fill.Parent = bar
+
+	local knob = Instance.new("ImageButton")
+	knob.Size = UDim2.new(0, 24, 0, 24)
+	knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	knob.Position = UDim2.new(fill.Size.X.Scale, 0, 0.5, 0)
+	knob.BackgroundColor3 = neonBlue
+	knob.AutoButtonColor = false
+	makeCorner(knob, 12)
+	makeStroke(knob, neonYellow, 2)
+	knob.Parent = bar
+
+	local value = defaultV
+	local dragging = false
+
+	local function setFromX(x: number)
+		local p = math.clamp((x - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X), 0, 1)
+		local v = math.floor(minV + (maxV - minV) * p + 0.5)
+		value = v
+		fill.Size = UDim2.new(p, 0, 1, 0)
+		knob.Position = UDim2.new(p, 0, 0.5, 0)
+		lbl.Text = labelText .. "  ("..tostring(v)..")"
+		onChanged(v)
+	end
+
+	local function beginDrag(input: InputObject)
+		dragging = true
+		setFromX(input.Position.X)
+	end
+
+	local function endDrag()
+		dragging = false
+	end
+
+	bar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			beginDrag(input)
+		end
+	end)
+	knob.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			beginDrag(input)
+		end
+	end)
+
+	UIS.InputChanged:Connect(function(input)
+		if not dragging then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			setFromX(input.Position.X)
+		end
+	end)
+	UIS.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			endDrag()
+		end
+	end)
+
+	return {
+		get = function() return value end,
+		set = function(v: number)
+			v = math.clamp(v, minV, maxV)
+			local p = (v - minV) / (maxV - minV)
+			value = v
+			fill.Size = UDim2.new(p,0,1,0)
+			knob.Position = UDim2.new(p,0,0.5,0)
+			lbl.Text = labelText .. "  ("..tostring(v)..")"
+			onChanged(v)
+		end
+	}
 end
 
--- // BUILDERS
-local function sectionHeader(parent, text)
-    local lbl = new("TextLabel", {
-        Size = UDim2.new(1, -20, 0, 28),
-        Position = UDim2.new(0, 10, 0, 0),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamBold,
-        TextSize = 16,
-        TextColor3 = neonYellow,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = text
-    }, parent)
-    return lbl
+local function disconnectConn(c: RBXScriptConnection?)
+	if c then pcall(function() c:Disconnect() end) end
+	return nil
 end
 
-local function makeButton(parent, text)
-    local b = new("TextButton", {
-        Size = UDim2.new(1, -20, 0, UIS.TouchEnabled and 64 or 44),
-        Position = UDim2.new(0, 10, 0, 0),
-        BackgroundColor3 = midBG,
-        AutoButtonColor = false,
-        Font = Enum.Font.GothamBold,
-        TextSize = (UIS.TouchEnabled and 18 or 16),
-        TextColor3 = neonBlue,
-        Text = text
-    }, parent)
-    corner(b, 10)
-    stroke(b, neonPink, 2)
-    b.MouseEnter:Connect(function()
-        if not UIS.TouchEnabled then
-            tween(b, TweenInfo.new(0.15), {BackgroundColor3 = neonPink, TextColor3 = Color3.new(0,0,0)}):Play()
-        end
-    end)
-    b.MouseLeave:Connect(function()
-        if not UIS.TouchEnabled then
-            tween(b, TweenInfo.new(0.15), {BackgroundColor3 = midBG, TextColor3 = neonBlue}):Play()
-        end
-    end)
-    b.MouseButton1Down:Connect(function()
-        tween(b, TweenInfo.new(0.05), {BackgroundTransparency = 0.1}):Play()
-    end)
-    b.MouseButton1Up:Connect(function()
-        tween(b, TweenInfo.new(0.1), {BackgroundTransparency = 0}):Play()
-    end)
-    return b
+------------------------------
+-- FEATURE IMPL
+------------------------------
+local function setWalkspeed(v: number)
+	local h = safeHumanoid()
+	if h then pcall(function() h.WalkSpeed = math.clamp(v, 0, MAX_SPEED) end) end
 end
 
-local function makeToggle(parent, text, initial)
-    local holder = new("Frame", {
-        Size = UDim2.new(1, -20, 0, UIS.TouchEnabled and 70 or 54),
-        Position = UDim2.new(0, 10, 0, 0),
-        BackgroundColor3 = darkBG
-    }, parent)
-    corner(holder, 10)
-    stroke(holder, neonBlue, 2)
-    padding(holder, 8)
-
-    local lbl = new("TextLabel", {
-        Size = UDim2.new(0.6, 0, 1, 0),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamSemibold,
-        TextSize = (UIS.TouchEnabled and 18 or 16),
-        TextColor3 = neonTeal,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = text
-    }, holder)
-
-    local btn = new("TextButton", {
-        Size = UDim2.new(0, UIS.TouchEnabled and 120 or 90, 0, UIS.TouchEnabled and 40 or 30),
-        Position = UDim2.new(1, -(UIS.TouchEnabled and 130 or 100), 0.5, -(UIS.TouchEnabled and 20 or 15)),
-        BackgroundColor3 = Color3.fromRGB(60,60,70),
-        AutoButtonColor = false,
-        Font = Enum.Font.GothamBold,
-        TextSize = UIS.TouchEnabled and 18 or 14,
-        TextColor3 = Color3.fromRGB(240,240,240),
-        Text = "OFF"
-    }, holder)
-    corner(btn, 8)
-
-    local state = (initial == true)
-    if state then
-        btn.BackgroundColor3 = Color3.fromRGB(0,170,90)
-        btn.Text = "ON"
-    end
-
-    btn.MouseButton1Click:Connect(function()
-        state = not state
-        if state then
-            tween(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(0,170,90)}):Play()
-            btn.Text = "ON"
-        else
-            tween(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(60,60,70)}):Play()
-            btn.Text = "OFF"
-        end
-    end)
-
-    return {
-        frame = holder,
-        label = lbl,
-        button = btn,
-        get = function() return state end,
-        set = function(v)
-            state = v and true or false
-            if state then
-                btn.BackgroundColor3 = Color3.fromRGB(0,170,90)
-                btn.Text = "ON"
-            else
-                btn.BackgroundColor3 = Color3.fromRGB(60,60,70)
-                btn.Text = "OFF"
-            end
-        end,
-        onClick = function(fn)
-            btn.MouseButton1Click:Connect(function() fn(state) end)
-        end
-    }
+local function setJumpPower(v: number)
+	local h = safeHumanoid()
+	if h then pcall(function() h.JumpPower = math.clamp(v, 0, MAX_JUMP) end) end
 end
 
-local function makeSlider(parent, text, min, max, default, onChange)
-    local holder = new("Frame", {
-        Size = UDim2.new(1, -20, 0, 84),
-        Position = UDim2.new(0,10,0,0),
-        BackgroundColor3 = darkBG
-    }, parent)
-    corner(holder, 10)
-    stroke(holder, neonBlue, 2)
+local function startFly()
+	if state.flying then return end
+	state.flying = true
+	local speed = 60
+	state.flyConn = RS.RenderStepped:Connect(function(dt)
+		local r = safeRoot()
+		local h = safeHumanoid()
+		if not r or not h then return end
+		local dir = Vector3.new()
+		if UIS:IsKeyDown(Enum.KeyCode.W) then dir += Vector3.new(0,0,-1) end
+		if UIS:IsKeyDown(Enum.KeyCode.S) then dir += Vector3.new(0,0,1) end
+		if UIS:IsKeyDown(Enum.KeyCode.A) then dir += Vector3.new(-1,0,0) end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then dir += Vector3.new(1,0,0) end
+		if UIS:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0,1,0) end
+		if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.LeftShift) then dir += Vector3.new(0,-1,0) end
 
-    local lbl = new("TextLabel", {
-        Size = UDim2.new(1, -20, 0, 24),
-        Position = UDim2.new(0,10,0,6),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamBold,
-        TextSize = (UIS.TouchEnabled and 18 or 16),
-        TextColor3 = neonYellow,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = text .. ": " .. tostring(default)
-    }, holder)
-
-    local bar = new("Frame", {
-        Size = UDim2.new(1, -20, 0, 10),
-        Position = UDim2.new(0, 10, 0, 40),
-        BackgroundColor3 = Color3.fromRGB(48, 48, 56)
-    }, holder)
-    corner(bar, 6)
-
-    local fill = new("Frame", {
-        Size = UDim2.new((default - min) / (max - min), 0, 1, 0),
-        BackgroundColor3 = neonPink
-    }, bar)
-    corner(fill, 6)
-
-    local knob = new("ImageButton", {
-        Size = UDim2.new(0, 28, 0, 28),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(fill.Size.X.Scale, 0, 0.5, 0),
-        BackgroundTransparency = 1
-    }, bar)
-
-    local dragging = false
-    local function setFromX(x)
-        local p = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-        fill.Size = UDim2.new(p,0,1,0)
-        knob.Position = UDim2.new(p,0,0.5,0)
-        local value = math.floor(min + (max - min) * p + 0.5)
-        lbl.Text = text .. ": " .. tostring(value)
-        if onChange then pcall(onChange, value) end
-        return value
-    end
-
-    knob.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-        end
-    end)
-    bar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            setFromX(input.Position.X)
-            dragging = true
-        end
-    end)
-    UIS.InputChanged:Connect(function(input)
-        if not dragging then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            setFromX(input.Position.X)
-        end
-    end)
-    UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
-
-    return {
-        frame = holder,
-        setValueFromX = setFromX
-    }
+		-- mobile thumbstick support
+		if h then dir += h.MoveDirection end
+		if dir.Magnitude > 0 then
+			dir = dir.Unit
+		end
+		local move = dir * speed * dt
+		pcall(function() character:TranslateBy(move) end)
+	end)
 end
 
-local function makeTextbox(parent, labelText, placeholder, onSubmit)
-    local holder = new("Frame", {
-        Size = UDim2.new(1, -20, 0, 70),
-        Position = UDim2.new(0, 10, 0, 0),
-        BackgroundColor3 = darkBG
-    }, parent)
-    corner(holder, 10)
-    stroke(holder, neonBlue, 2)
-
-    local lbl = new("TextLabel", {
-        Size = UDim2.new(1, -20, 0, 20),
-        Position = UDim2.new(0, 10, 0, 6),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamSemibold,
-        TextSize = (UIS.TouchEnabled and 18 or 16),
-        TextColor3 = neonTeal,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = labelText
-    }, holder)
-
-    local box = new("TextBox", {
-        Size = UDim2.new(1, -20, 0, UIS.TouchEnabled and 40 or 34),
-        Position = UDim2.new(0, 10, 0, 30),
-        BackgroundColor3 = midBG,
-        PlaceholderText = placeholder or "",
-        Font = Enum.Font.Gotham,
-        TextSize = (UIS.TouchEnabled and 18 or 16),
-        TextColor3 = Color3.fromRGB(230,230,230),
-        ClearTextOnFocus = false
-    }, holder)
-    corner(box, 8)
-    stroke(box, neonPink, 1)
-
-    box.FocusLost:Connect(function(enter)
-        if enter and onSubmit then
-            onSubmit(box.Text)
-        end
-    end)
-
-    return {frame = holder, box = box}
+local function stopFly()
+	state.flying = false
+	state.flyConn = disconnectConn(state.flyConn)
 end
 
--- // FEATURE HELPERS
-local function ensureHumanoid()
-    if not character or not character.Parent then
-        character = player.Character or player.CharacterAdded:Wait()
-    end
-    if not humanoid or not humanoid.Parent then
-        humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid")
-    end
+local function startNoclip()
+	if state.noclip then return end
+	state.noclip = true
+	state.noclipConn = RS.Stepped:Connect(function()
+		if not character then return end
+		for _, part in ipairs(character:GetDescendants()) do
+			if part:IsA("BasePart") then
+				if part.Name ~= "HumanoidRootPart" then
+					pcall(function() part.CanCollide = false end)
+				end
+			end
+		end
+	end)
+end
+
+local function stopNoclip()
+	state.noclip = false
+	state.noclipConn = disconnectConn(state.noclipConn)
+	-- attempt restore
+	if character then
+		for _, part in ipairs(character:GetDescendants()) do
+			if part:IsA("BasePart") then
+				pcall(function() part.CanCollide = true end)
+			end
+		end
+	end
+end
+
+local function enableInfJump()
+	if state.infJump then return end
+	state.infJump = true
+	state.infConn = UIS.JumpRequest:Connect(function()
+		local h = safeHumanoid()
+		if state.infJump and h then
+			pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
+		end
+	end)
+end
+
+local function disableInfJump()
+	state.infJump = false
+	state.infConn = disconnectConn(state.infConn)
+end
+
+local function teleportUp(dy: number)
+	local r = safeRoot()
+	if r then
+		pcall(function()
+			r.CFrame = r.CFrame + Vector3.new(0, dy, 0)
+		end)
+	end
+end
+
+local function blinkForward(d: number)
+	local r = safeRoot()
+	if r then
+		pcall(function()
+			local forward = r.CFrame.LookVector * d
+			r.CFrame = r.CFrame + forward
+		end)
+	end
 end
 
 local function nearestPlayer()
-    ensureHumanoid()
-    if not character or not character.PrimaryPart then return nil end
-    local best, bestDist
-    bestDist = math.huge
-    for _, pl in ipairs(Players:GetPlayers()) do
-        if pl ~= player and pl.Character and pl.Character.PrimaryPart then
-            local d = (pl.Character.PrimaryPart.Position - character.PrimaryPart.Position).Magnitude
-            if d < bestDist then bestDist = d best = pl end
-        end
-    end
-    return best
+	local r = safeRoot()
+	if not r then return nil end
+	local best, bestDist
+	bestDist = math.huge
+	for _, pl in ipairs(Players:GetPlayers()) do
+		if pl ~= player and pl.Character and pl.Character.PrimaryPart then
+			local dist = (pl.Character.PrimaryPart.Position - r.Position).Magnitude
+			if dist < bestDist then
+				bestDist = dist
+				best = pl
+			end
+		end
+	end
+	return best
 end
 
-local blurEffect
-local function setBlur(enabled, size)
-    if enabled then
-        if not blurEffect then
-            blurEffect = new("BlurEffect", {Size = size or 12}, Lighting)
-        else
-            blurEffect.Size = size or 12
-            blurEffect.Enabled = true
-        end
-    else
-        if blurEffect then blurEffect.Enabled = false end
-    end
+local function teleportToPlayer(plr: Player)
+	local r = safeRoot()
+	if r and plr and plr.Character and plr.Character.PrimaryPart then
+		pcall(function()
+			r.CFrame = plr.Character.PrimaryPart.CFrame + Vector3.new(1.5, 0, 0)
+		end)
+	end
 end
 
-local function highlightCharacter(enabled)
-    ensureHumanoid()
-    if not character then return end
-    local hl = character:FindFirstChild("SX_Highlight")
-    if enabled then
-        if not hl then
-            hl = new("Highlight", {
-                Name = "SX_Highlight",
-                FillTransparency = 1,
-                OutlineTransparency = 0,
-                OutlineColor = neonPink,
-                DepthMode = Enum.HighlightDepthMode.Occluded
-            }, character)
-        end
-    else
-        if hl then hl:Destroy() end
-    end
+local function toggleNightVision(on: boolean)
+	if on then
+		Lighting.Brightness = 4
+		Lighting.Ambient = Color3.fromRGB(0, 255, 200)
+		Lighting.ColorShift_Top = Color3.fromRGB(0, 120, 120)
+		Lighting.OutdoorAmbient = Color3.fromRGB(0, 60, 60)
+	else
+		Lighting.Brightness = 2
+		Lighting.Ambient = Color3.fromRGB(127,127,127)
+		Lighting.ColorShift_Top = Color3.new()
+		Lighting.OutdoorAmbient = Color3.new()
+	end
 end
 
-local function playBeep()
-    local s = new("Sound", {
-        Volume = 0.2,
-        SoundId = "rbxassetid://9118823109"
-    }, playerGui)
-    pcall(function() s:Play() end)
-    task.delay(2, function() if s then s:Destroy() end end)
+local function toggleNeonSkin(on: boolean)
+	if not character then return end
+	for _, p in ipairs(character:GetDescendants()) do
+		if p:IsA("BasePart") then
+			pcall(function()
+				if on then
+					p.Material = Enum.Material.Neon
+					p.Color = Color3.fromRGB(255, 20, 150)
+				else
+					p.Material = Enum.Material.SmoothPlastic
+					p.Color = Color3.fromRGB(255, 255, 255)
+				end
+			end)
+		end
+	end
 end
 
--- // PANEL BUILD
+local function toggleFovBoost(on: boolean)
+	local camera = workspace.CurrentCamera
+	if camera then
+		camera.FieldOfView = on and CYBER_FOV or DEFAULT_FOV
+	end
+end
+
+local function toggleCameraShake(on: boolean)
+	state.cameraShake = on
+	state.shakeConn = disconnectConn(state.shakeConn)
+	if on then
+		local camera = workspace.CurrentCamera
+		if not camera then return end
+		local seed = 0
+		state.shakeConn = RS.RenderStepped:Connect(function(dt)
+			seed += dt * 8
+			local off = Vector3.new(math.sin(seed)*0.2, math.cos(seed*1.2)*0.2, 0)
+			camera.CFrame = CFrame.new(camera.CFrame.Position + off) * CFrame.Angles(0, 0, 0)
+		end)
+	end
+end
+
+local function playDance()
+	local h = safeHumanoid()
+	if not h then return end
+	local animator: Animator? = h:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = h
+	end
+	-- Roblox default dance animation id example
+	local anim = Instance.new("Animation")
+	anim.AnimationId = "rbxassetid://507771019" -- Dance1
+	pcall(function()
+		if state.animTrack then state.animTrack:Stop() end
+		state.animTrack = animator:LoadAnimation(anim)
+		state.animTrack:Play(0.1, 1, 1)
+	end)
+end
+
+local function stopDance()
+	if state.animTrack then
+		pcall(function() state.animTrack:Stop() end)
+	end
+	state.animTrack = nil
+end
+
+local function addWaypoint()
+	local r = safeRoot()
+	if not r then return end
+	local name = "WP-" .. string.sub(HttpService:GenerateGUID(false), 1, 6)
+	state.waypoints[name] = r.CFrame
+	StarterGui:SetCore("SendNotification", {Title="Waypoint Added", Text=name, Duration=2})
+	if state.ui and state.ui.waypointList then
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.new(1, -10, 0, 22)
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.Font = Enum.Font.GothamSemibold
+		l.TextSize = 14
+		l.TextColor3 = neonYellow
+		l.Text = "• " .. name
+		l.Parent = state.ui.waypointList
+	end
+end
+
+local function teleportToWaypoint(name: string)
+	local cf = state.waypoints[name]
+	local r  = safeRoot()
+	if cf and r then
+		pcall(function() r.CFrame = cf end)
+	end
+end
+
+local function clearWaypoints()
+	state.waypoints = {}
+	if state.ui and state.ui.waypointList then
+		for _, child in ipairs(state.ui.waypointList:GetChildren()) do
+			if child:IsA("TextLabel") then child:Destroy() end
+		end
+	end
+end
+
+local function spamRemote()
+	local remote = ReplicatedStorage:FindFirstChild("ExploitTestEvent")
+	if remote and remote:IsA("RemoteEvent") then
+		for i = 1, 20 do
+			pcall(function() remote:FireServer("TestPayload", i) end)
+		end
+	else
+		warn("ExploitTestEvent not found in ReplicatedStorage (skipping).")
+	end
+end
+
+local function bigBurst()
+	local remote = ReplicatedStorage:FindFirstChild("ExploitTestEvent")
+	if remote and remote:IsA("RemoteEvent") then
+		for i = 1, 50 do
+			pcall(function() remote:FireServer("Burst", i) end)
+		end
+	else
+		warn("ExploitTestEvent not found in ReplicatedStorage (skipping).")
+	end
+end
+
+local function resetAll()
+	disableInfJump()
+	stopNoclip()
+	stopFly()
+	stopDance()
+	toggleNightVision(false)
+	toggleNeonSkin(false)
+	toggleFovBoost(false)
+	toggleCameraShake(false)
+
+	local h = safeHumanoid()
+	if h then
+		pcall(function()
+			h.WalkSpeed = DEFAULT_SPEED
+			h.JumpPower = DEFAULT_JUMP
+			h.Sit = false
+		end)
+	end
+	workspace.Gravity = state.prevGravity or 196.2
+
+	-- UI sync (best-effort)
+	if state.ui then
+		if state.ui.tgSpeed then state.ui.tgSpeed.button.Text = "OFF" state.ui.tgSpeed.button.BackgroundColor3 = Color3.fromRGB(40,40,48) end
+		if state.ui.tgJump  then state.ui.tgJump.button.Text  = "OFF" state.ui.tgJump.button.BackgroundColor3  = Color3.fromRGB(40,40,48) end
+		if state.ui.tgInf   then state.ui.tgInf.button.Text   = "OFF" state.ui.tgInf.button.BackgroundColor3   = Color3.fromRGB(40,40,48) end
+		if state.ui.tgNc    then state.ui.tgNc.button.Text    = "OFF" state.ui.tgNc.button.BackgroundColor3    = Color3.fromRGB(40,40,48) end
+		if state.ui.tgFly   then state.ui.tgFly.button.Text   = "OFF" state.ui.tgFly.button.BackgroundColor3   = Color3.fromRGB(40,40,48) end
+		if state.ui.tgGrav  then state.ui.tgGrav.button.Text  = "OFF" state.ui.tgGrav.button.BackgroundColor3  = Color3.fromRGB(40,40,48) end
+		if state.ui.tgNV    then state.ui.tgNV.button.Text    = "OFF" state.ui.tgNV.button.BackgroundColor3    = Color3.fromRGB(40,40,48) end
+		if state.ui.tgNeon  then state.ui.tgNeon.button.Text  = "OFF" state.ui.tgNeon.button.BackgroundColor3  = Color3.fromRGB(40,40,48) end
+		if state.ui.tgFov   then state.ui.tgFov.button.Text   = "OFF" state.ui.tgFov.button.BackgroundColor3   = Color3.fromRGB(40,40,48) end
+		if state.ui.tgShake then state.ui.tgShake.button.Text = "OFF" state.ui.tgShake.button.BackgroundColor3 = Color3.fromRGB(40,40,48) end
+
+		if state.ui.wsSlider then state.ui.wsSlider.set(DEFAULT_SPEED) end
+		if state.ui.jpSlider then state.ui.jpSlider.set(DEFAULT_JUMP) end
+	end
+end
+
+------------------------------
+-- UI BUILD
+------------------------------
 local function buildPanel()
-    if panelGui then panelGui:Destroy() end
+	if panelGui then panelGui:Destroy() end
 
-    panelGui = new("ScreenGui", {Name = "SX_CyberpunkPanel", ResetOnSpawn = false}, playerGui)
+	panelGui = Instance.new("ScreenGui")
+	panelGui.Name = "SX_CyberpunkPanel"
+	panelGui.ResetOnSpawn = false
+	panelGui.IgnoreGuiInset = true
+	panelGui.Parent = playerGui
 
-    local frame = new("Frame", {
-        Name = "Main",
-        Size = UDim2.new(0, UIS.TouchEnabled and 520 or 460, 0, UIS.TouchEnabled and 720 or 640),
-        Position = UDim2.new(0.5, 0, 0.5, 0),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = darkBG,
-        Active = true
-    }, panelGui)
-    corner(frame, 14); stroke(frame, neonBlue, 3)
+	-- Backdrop glass
+	local glass = Instance.new("Frame")
+	glass.Size = UDim2.new(1, 0, 1, 0)
+	glass.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	glass.BackgroundTransparency = 0.35
+	glass.Visible = true
+	glass.Parent = panelGui
 
-    -- Title bar
-    local titleBar = new("Frame", {
-        Size = UDim2.new(1, 0, 0, UIS.TouchEnabled and 56 or 46),
-        BackgroundColor3 = Color3.fromRGB(10,10,14)
-    }, frame)
-    corner(titleBar, 14); stroke(titleBar, neonPink, 2)
+	-- Main panel
+	local frame = Instance.new("Frame")
+	frame.Name = "Main"
+	frame.Size = UDim2.new(0, PANEL_WIDTH, 0, PANEL_HEIGHT)
+	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.BackgroundColor3 = panelBG
+	makeCorner(frame, 14)
+	makeStroke(frame, neonBlue, 3)
+	makeGradient(frame, Color3.fromRGB(20,20,28), Color3.fromRGB(12,12,18))
+	frame.Parent = panelGui
 
-    local title = new("TextLabel", {
-        Size = UDim2.new(1, -160, 1, 0),
-        Position = UDim2.new(0, 12, 0, 0),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamBlack,
-        TextSize = UIS.TouchEnabled and 22 or 18,
-        TextColor3 = neonPink,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = "⚡ SX Cyberpunk Panel — Mobile"
-    }, titleBar)
+	-- title bar (custom draggable for mobile+pc)
+	local titleBar = Instance.new("Frame")
+	titleBar.Size = UDim2.new(1, 0, 0, 48)
+	titleBar.BackgroundColor3 = darkBG
+	makeCorner(titleBar, 14)
+	makeStroke(titleBar, neonPink, 2)
+	titleBar.Parent = frame
 
-    local hideBtn = new("TextButton", {
-        Size = UDim2.new(0, UIS.TouchEnabled and 48 or 40, 0, UIS.TouchEnabled and 40 or 32),
-        Position = UDim2.new(1, -(UIS.TouchEnabled and 56 or 48), 0.5, -(UIS.TouchEnabled and 20 or 16)),
-        BackgroundColor3 = neonBlue,
-        AutoButtonColor = false,
-        Text = "⤫",
-        Font = Enum.Font.GothamBold,
-        TextSize = UIS.TouchEnabled and 20 or 16,
-        TextColor3 = Color3.fromRGB(10,10,14)
-    }, titleBar)
-    corner(hideBtn, 10); stroke(hideBtn, neonPink, 1)
+	local titleText = Instance.new("TextLabel")
+	titleText.BackgroundTransparency = 1
+	titleText.Size = UDim2.new(1, -140, 1, 0)
+	titleText.Position = UDim2.new(0, 12, 0, 0)
+	titleText.Font = Enum.Font.GothamBlack
+	titleText.TextSize = 18
+	titleText.TextColor3 = neonPink
+	titleText.TextXAlignment = Enum.TextXAlignment.Left
+	titleText.Text = "⚡ SX Cyberpunk Panel — MOBILE"
+	titleText.Parent = titleBar
 
-    makeDraggable(titleBar, frame)
+	-- hide / close buttons
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Size = UDim2.new(0, 80, 0, 36)
+	closeBtn.Position = UDim2.new(1, -88, 0.5, -18)
+	closeBtn.AutoButtonColor = false
+	closeBtn.BackgroundColor3 = Color3.fromRGB(40,40,48)
+	closeBtn.TextColor3 = neonYellow
+	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.TextSize = 14
+	closeBtn.Text = "CLOSE"
+	makeCorner(closeBtn, 10)
+	makeStroke(closeBtn, neonBlue, 2)
+	closeBtn.Parent = titleBar
 
-    local container = new("ScrollingFrame", {
-        Size = UDim2.new(1, -10, 1, -(UIS.TouchEnabled and 70 or 60)),
-        Position = UDim2.new(0, 5, 0, UIS.TouchEnabled and 62 or 50),
-        BackgroundTransparency = 1,
-        CanvasSize = UDim2.new(0,0,10,0),
-        ScrollBarThickness = UIS.TouchEnabled and 10 or 8
-    }, frame)
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 44, 0, 36)
+	toggleBtn.Position = UDim2.new(1, -140, 0.5, -18)
+	toggleBtn.AutoButtonColor = false
+	toggleBtn.BackgroundColor3 = neonBlue
+	toggleBtn.TextColor3 = Color3.fromRGB(0,0,0)
+	toggleBtn.Font = Enum.Font.GothamBlack
+	toggleBtn.TextSize = 18
+	toggleBtn.Text = "≡"
+	makeCorner(toggleBtn, 10)
+	makeStroke(toggleBtn, neonPink, 2)
+	toggleBtn.Parent = titleBar
 
-    local list = new("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, container)
+	-- content area (scrolling)
+	local scroller = Instance.new("ScrollingFrame")
+	scroller.Size = UDim2.new(1, -12, 1, -60)
+	scroller.Position = UDim2.new(0, 6, 0, 54)
+	scroller.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroller.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroller.ScrollBarThickness = 8
+	scroller.BackgroundTransparency = 1
+	scroller.Parent = frame
 
-    -- FOOTER
-    local footer = new("TextLabel", {
-        Size = UDim2.new(1, -20, 0, 20),
-        Position = UDim2.new(0, 10, 1, -24),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.Gotham,
-        TextSize = 14,
-        TextColor3 = neonYellow,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = "Cyberpunk HUD active ✦ Touch-drag title to move"
-    }, frame)
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 8)
+	layout.Parent = scroller
 
-    hideBtn.MouseButton1Click:Connect(function()
-        frame.Visible = false
-    end)
+	-- FPS label (optional)
+	local statusBar = Instance.new("TextLabel")
+	statusBar.BackgroundTransparency = 1
+	statusBar.Size = UDim2.new(1, -20, 0, 20)
+	statusBar.Position = UDim2.new(0, 10, 1, -22)
+	statusBar.Font = Enum.Font.GothamSemibold
+	statusBar.TextSize = 13
+	statusBar.TextXAlignment = Enum.TextXAlignment.Right
+	statusBar.TextColor3 = neonYellow
+	statusBar.Text = "Ready."
+	statusBar.Parent = frame
 
-    -- === SECTIONS & FEATURES ===
+	-- make draggable (mobile friendly)
+	do
+		local dragging = false
+		local dragStart = Vector2.new()
+		local startPos = frame.Position
 
-    -- Movement Section
-    sectionHeader(container, "Movement")
-    makeSlider(container, "WalkSpeed", 0, MAX_SPEED, DEFAULT_SPEED, function(v) ensureHumanoid(); humanoid.WalkSpeed = v end)
-    makeSlider(container, "JumpPower", 0, MAX_JUMP, DEFAULT_JUMP, function(v) ensureHumanoid(); humanoid.JumpPower = v end)
+		local function inputBegan(input: InputObject)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				dragStart = input.Position
+				startPos = frame.Position
+				if state.dragConnEnd then state.dragConnEnd:Disconnect() end
+				state.dragConnEnd = input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						dragging = false
+						state.dragConnEnd = disconnectConn(state.dragConnEnd)
+					end
+				end)
+			end
+		end
 
-    local infJump = makeToggle(container, "Infinite Jump", false)
-    infJump.onClick(function(state)
-        ensureHumanoid()
-        if state then
-            if not _G.__sx_infjump then
-                _G.__sx_infjump = UIS.JumpRequest:Connect(function()
-                    if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
-                end)
-            end
-        else
-            if _G.__sx_infjump then safeDisconnect(_G.__sx_infjump); _G.__sx_infjump = nil end
-        end
-    end)
+		local function inputChanged(input: InputObject)
+			if not dragging then return end
+			if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+				local delta = input.Position - dragStart
+				frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			end
+		end
 
-    local noclip = makeToggle(container, "Noclip", false)
-    noclip.onClick(function(state)
-        if state then
-            if not _G.__sx_noclip then
-                _G.__sx_noclip = RS.Stepped:Connect(function()
-                    if not character then return end
-                    for _, p in ipairs(character:GetDescendants()) do
-                        if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then p.CanCollide = false end
-                    end
-                end)
-            end
-        else
-            if _G.__sx_noclip then safeDisconnect(_G.__sx_noclip); _G.__sx_noclip = nil end
-            if character then
-                for _, p in ipairs(character:GetDescendants()) do
-                    if p:IsA("BasePart") then p.CanCollide = true end
-                end
-            end
-        end
-    end)
+		titleBar.InputBegan:Connect(inputBegan)
+		titleBar.InputChanged:Connect(inputChanged)
+	end
 
-    local flyToggle = makeToggle(container, "Fly", false)
-    local flyConn
-    flyToggle.onClick(function(state)
-        ensureHumanoid()
-        if state then
-            flyConn = RS.RenderStepped:Connect(function(dt)
-                if not character or not character.PrimaryPart then return end
-                local dir = Vector3.new()
-                if UIS:IsKeyDown(Enum.KeyCode.W) then dir = dir + Vector3.new(0,0,-1) end
-                if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir + Vector3.new(0,0,1) end
-                if UIS:IsKeyDown(Enum.KeyCode.A) then dir = dir + Vector3.new(-1,0,0) end
-                if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + Vector3.new(1,0,0) end
-                if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0,1,0) end
-                if UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir + Vector3.new(0,-1,0) end
-                if humanoid then dir = dir + humanoid.MoveDirection end
-                if dir.Magnitude > 0 then dir = dir.Unit end
-                local speed = (humanoid and humanoid.WalkSpeed or DEFAULT_SPEED) * 1.2
-                local move = dir * speed * dt
-                pcall(function() character:TranslateBy(move) end)
-            end)
-        else
-            safeDisconnect(flyConn); flyConn = nil
-        end
-    end)
+	--------------------------
+	-- BUILD SECTIONS
+	--------------------------
+	sectionHeader(scroller, "Movement (Live)")
+	state.ui.wsSlider = makeSlider(scroller, "WalkSpeed", 0, MAX_SPEED, DEFAULT_SPEED, function(v)
+		setWalkspeed(v)
+	end)
+	state.ui.jpSlider = makeSlider(scroller, "JumpPower", 0, MAX_JUMP, DEFAULT_JUMP, function(v)
+		setJumpPower(v)
+	end)
 
-    -- Teleportation
-    sectionHeader(container, "Teleportation")
-    makeButton(container, "Teleport Up 50").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        if character.PrimaryPart then
-            character:SetPrimaryPartCFrame(character.PrimaryPart.CFrame + Vector3.new(0,50,0))
-        end
-    end)
-    makeButton(container, "Blink Forward 10").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        if character.PrimaryPart then
-            local forward = character.PrimaryPart.CFrame.LookVector * 10
-            character:SetPrimaryPartCFrame(character.PrimaryPart.CFrame + forward)
-        end
-    end)
-    makeButton(container, "Teleport To Nearest Player").MouseButton1Click:Connect(function()
-        local tgt = nearestPlayer()
-        if tgt and tgt.Character and tgt.Character.PrimaryPart and character and character.PrimaryPart then
-            character:SetPrimaryPartCFrame(tgt.Character.PrimaryPart.CFrame + Vector3.new(1,0,0))
-        end
-    end)
+	state.ui.tgSpeed = makeToggle(scroller, "Super Speed (100)", false, function(on)
+		state.superSpeed = on
+		if on then setWalkspeed(100) else setWalkspeed(DEFAULT_SPEED) end
+	end)
+	state.ui.tgJump  = makeToggle(scroller, "Super Jump (200)", false, function(on)
+		state.superJump = on
+		if on then setJumpPower(200) else setJumpPower(DEFAULT_JUMP) end
+	end)
+	state.ui.tgInf   = makeToggle(scroller, "Infinite Jump", false, function(on)
+		if on then enableInfJump() else disableInfJump() end
+	end)
+	state.ui.tgNc    = makeToggle(scroller, "Noclip", false, function(on)
+		if on then startNoclip() else stopNoclip() end
+	end)
+	state.ui.tgFly   = makeToggle(scroller, "Fly (WASD/Thumbstick + Space/Ctrl)", false, function(on)
+		if on then startFly() else stopFly() end
+	end)
 
-    local tapTP = makeToggle(container, "Tap-To-Teleport (touch/screen)", false)
-    tapTP.onClick(function(state)
-        if state then
-            if not _G.__sx_taptp then
-                local mouse = player:GetMouse()
-                _G.__sx_taptp = mouse.Button1Down:Connect(function()
-                    ensureHumanoid()
-                    local hit = mouse.Hit
-                    if hit and character and character.PrimaryPart then
-                        character:SetPrimaryPartCFrame(CFrame.new(hit.p + Vector3.new(0,3,0)))
-                    end
-                end)
-            end
-        else
-            if _G.__sx_taptp then safeDisconnect(_G.__sx_taptp); _G.__sx_taptp = nil end
-        end
-    end)
+	sectionHeader(scroller, "Teleport & Position")
+	makeButton(scroller, "Teleport Up +50").MouseButton1Click:Connect(function() teleportUp(50) end)
+	makeButton(scroller, "Blink Forward +10").MouseButton1Click:Connect(function() blinkForward(10) end)
+	makeButton(scroller, "Teleport to Nearest Player").MouseButton1Click:Connect(function()
+		local t = nearestPlayer()
+		if t then teleportToPlayer(t) end
+	end)
+	makeButton(scroller, "Teleport to Random Player").MouseButton1Click:Connect(function()
+		local list = Players:GetPlayers()
+		local pool = {}
+		for _, pl in ipairs(list) do if pl ~= player then table.insert(pool, pl) end end
+		if #pool > 0 then
+			teleportToPlayer(pool[math.random(1, #pool)])
+		end
+	end)
 
-    -- Health & Utility
-    sectionHeader(container, "Health & Utility")
-    makeButton(container, "Heal To Full").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        humanoid.Health = humanoid.MaxHealth
-    end)
-    makeButton(container, "Sit / Unsit").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        humanoid.Sit = not humanoid.Sit
-    end)
-    makeButton(container, "Ragdoll").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    end)
-    makeButton(container, "Reset Movement").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        humanoid.WalkSpeed = DEFAULT_SPEED
-        humanoid.JumpPower = DEFAULT_JUMP
-    end)
+	sectionHeader(scroller, "Waypoints")
+	do
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, -20, 0, BIG_BUTTON_HEIGHT)
+		row.Position = UDim2.new(0, 10, 0, 0)
+		row.BackgroundTransparency = 1
+		row.Parent = scroller
 
-    -- Camera
-    sectionHeader(container, "Camera")
-    local cam = workspace.CurrentCamera
-    makeSlider(container, "FieldOfView", 50, 120, DEFAULT_FOV, function(v)
-        if cam then cam.FieldOfView = v end
-    end)
-    local spectateTB = makeTextbox(container, "Spectate Player", "Enter username", function(txt)
-        local plr = Players:FindFirstChild(txt)
-        if plr and plr.Character and plr.Character:FindFirstChild("Humanoid") then
-            cam.CameraSubject = plr.Character.Humanoid
-        end
-    end)
-    makeButton(container, "Spectate Self").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        cam.CameraSubject = humanoid
-    end)
+		local addBtn = makeButton(row, "Add Waypoint")
+		addBtn.Size = UDim2.new(0.33, -14, 1, 0)
+		addBtn.Position = UDim2.new(0, 0, 0, 0)
 
-    -- Visuals
-    sectionHeader(container, "Visuals")
-    local nightVision = makeToggle(container, "Night Vision (Ambient + Brightness)", false)
-    local prevAmbient = Lighting.Ambient
-    local prevBrightness = Lighting.Brightness
-    nightVision.onClick(function(state)
-        if state then
-            prevAmbient = Lighting.Ambient
-            prevBrightness = Lighting.Brightness
-            Lighting.Ambient = neonTeal
-            Lighting.Brightness = 4
-        else
-            Lighting.Ambient = prevAmbient
-            Lighting.Brightness = prevBrightness
-        end
-    end)
+		local tpBtn = makeButton(row, "Teleport To (last)")
+		tpBtn.Size = UDim2.new(0.33, -14, 1, 0)
+		tpBtn.Position = UDim2.new(0.34, 7, 0, 0)
 
-    local blurToggle = makeToggle(container, "Background Blur", false)
-    blurToggle.onClick(function(state)
-        setBlur(state, 14)
-    end)
+		local clrBtn = makeButton(row, "Clear All")
+		clrBtn.Size = UDim2.new(0.33, -14, 1, 0)
+		clrBtn.Position = UDim2.new(0.67, 14, 0, 0)
 
-    local outlineToggle = makeToggle(container, "Character Neon Outline", false)
-    outlineToggle.onClick(function(state) highlightCharacter(state) end)
+		local listHolder = Instance.new("Frame")
+		listHolder.Size = UDim2.new(1, -20, 0, 110)
+		listHolder.Position = UDim2.new(0, 10, 0, 8)
+		listHolder.BackgroundColor3 = Color3.fromRGB(8,8,12)
+		makeCorner(listHolder, 10); makeStroke(listHolder, neonBlue, 2)
+		listHolder.Parent = scroller
 
-    -- World
-    sectionHeader(container, "World")
-    makeButton(container, "Toggle Low Gravity (0.5x)").MouseButton1Click:Connect(function()
-        workspace.Gravity = (workspace.Gravity == 196.2) and 98.1 or 196.2
-    end)
-    makeButton(container, "Launch Upward").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        if character.PrimaryPart then
-            character.PrimaryPart.Velocity = Vector3.new(0, 200, 0)
-        end
-    end)
-    makeButton(container, "Spin 90° Yaw").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        if character.PrimaryPart then
-            character:SetPrimaryPartCFrame(character.PrimaryPart.CFrame * CFrame.Angles(0, math.rad(90), 0))
-        end
-    end)
+		local listScroll = Instance.new("ScrollingFrame")
+		listScroll.Size = UDim2.new(1, -8, 1, -8)
+		listScroll.Position = UDim2.new(0, 4, 0, 4)
+		listScroll.CanvasSize = UDim2.new(0,0,0,0)
+		listScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		listScroll.BackgroundTransparency = 1
+		listScroll.ScrollBarThickness = 6
+		listScroll.Parent = listHolder
 
-    -- Diagnostics / Debug
-    sectionHeader(container, "Diagnostics")
-    makeButton(container, "Print State").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        logPrint("WS", humanoid.WalkSpeed, "JP", humanoid.JumpPower, "HP", humanoid.Health)
-    end)
-    makeButton(container, "Beep").MouseButton1Click:Connect(function() playBeep() end)
+		local lLayout = Instance.new("UIListLayout")
+		lLayout.Padding = UDim.new(0, 4)
+		lLayout.Parent = listScroll
 
-    -- Presets
-    sectionHeader(container, "Presets")
-    makeButton(container, "Preset: Speed 100 / Jump 100").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        humanoid.WalkSpeed = 100
-        humanoid.JumpPower = 100
-    end)
-    makeButton(container, "Preset: Moon (Speed 50 / Jump 200)").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        humanoid.WalkSpeed = 50
-        humanoid.JumpPower = 200
-    end)
-    makeButton(container, "Reset All / Clear FX").MouseButton1Click:Connect(function()
-        ensureHumanoid()
-        humanoid.WalkSpeed = DEFAULT_SPEED
-        humanoid.JumpPower = DEFAULT_JUMP
-        if _G.__sx_infjump then safeDisconnect(_G.__sx_infjump) _G.__sx_infjump=nil end
-        if _G.__sx_noclip then safeDisconnect(_G.__sx_noclip) _G.__sx_noclip=nil end
-        if _G.__sx_taptp then safeDisconnect(_G.__sx_taptp) _G.__sx_taptp=nil end
-        setBlur(false)
-        highlightCharacter(false)
-        if cam then cam.FieldOfView = DEFAULT_FOV end
-        Lighting.Ambient = prevAmbient
-        Lighting.Brightness = prevBrightness
-    end)
+		state.ui.waypointList = listScroll
+
+		addBtn.MouseButton1Click:Connect(function()
+			addWaypoint()
+		end)
+		tpBtn.MouseButton1Click:Connect(function()
+			-- teleport to last added
+			local last
+			for k, _ in pairs(state.waypoints) do last = k end
+			if last then teleportToWaypoint(last) end
+		end)
+		clrBtn.MouseButton1Click:Connect(function()
+			clearWaypoints()
+		end)
+	end
+
+	sectionHeader(scroller, "World / Visual FX")
+	state.ui.tgGrav = makeToggle(scroller, "Low Gravity (0.5x)", false, function(on)
+		if on then
+			state.prevGravity = workspace.Gravity
+			workspace.Gravity = (state.prevGravity or 196.2) * 0.5
+		else
+			workspace.Gravity = state.prevGravity or 196.2
+		end
+	end)
+	state.ui.tgNV = makeToggle(scroller, "Night Vision", false, function(on)
+		state.nightVision = on
+		toggleNightVision(on)
+	end)
+	state.ui.tgNeon = makeToggle(scroller, "Neon Character Skin", false, function(on)
+		state.neonSkin = on
+		toggleNeonSkin(on)
+	end)
+	state.ui.tgFov = makeToggle(scroller, "FOV Boost", false, function(on)
+		state.fovBoost = on
+		toggleFovBoost(on)
+	end)
+	state.ui.tgShake = makeToggle(scroller, "Camera Shake", false, function(on)
+		toggleCameraShake(on)
+	end)
+
+	sectionHeader(scroller, "Health / Debug")
+	makeButton(scroller, "Heal to Full").MouseButton1Click:Connect(function()
+		local h = safeHumanoid()
+		if h then pcall(function() h.Health = h.MaxHealth end) end
+	end)
+	makeButton(scroller, "Sit / Unsit").MouseButton1Click:Connect(function()
+		local h = safeHumanoid()
+		if h then pcall(function() h.Sit = not h.Sit end) end
+	end)
+	makeButton(scroller, "Print Local State").MouseButton1Click:Connect(function()
+		print("-- SX STATE --")
+		for k,v in pairs(state) do
+			if typeof(v) ~= "Instance" and typeof(v) ~= "function" and typeof(v) ~= "table" then
+				print(k, v)
+			end
+		end
+	end)
+
+	sectionHeader(scroller, "Remotes (Test in your own place)")
+	makeButton(scroller, "Spam RemoteEvent (20)").MouseButton1Click:Connect(spamRemote)
+	makeButton(scroller, "Burst RemoteEvent (50)").MouseButton1Click:Connect(bigBurst)
+
+	sectionHeader(scroller, "Fun")
+	makeButton(scroller, "Dance!").MouseButton1Click:Connect(playDance)
+	makeButton(scroller, "Stop Dance").MouseButton1Click:Connect(stopDance)
+	makeButton(scroller, "Launch Upward").MouseButton1Click:Connect(function()
+		local r = safeRoot()
+		if r then pcall(function() r.AssemblyLinearVelocity = Vector3.new(0, 120, 0) end) end
+	end)
+	makeButton(scroller, "Spin 90°").MouseButton1Click:Connect(function()
+		local r = safeRoot()
+		if r then pcall(function() r.CFrame = r.CFrame * CFrame.Angles(0, math.rad(90), 0) end) end
+	end)
+
+	sectionHeader(scroller, "Presets / Reset")
+	makeButton(scroller, "Preset: Speed 100 / Jump 100").MouseButton1Click:Connect(function()
+		setWalkspeed(100); setJumpPower(100)
+		if state.ui.wsSlider then state.ui.wsSlider.set(100) end
+		if state.ui.jpSlider then state.ui.jpSlider.set(100) end
+	end)
+	makeButton(scroller, "Preset: Moon — Speed 50 / Jump 200").MouseButton1Click:Connect(function()
+		setWalkspeed(50); setJumpPower(200)
+		if state.ui.wsSlider then state.ui.wsSlider.set(50) end
+		if state.ui.jpSlider then state.ui.jpSlider.set(200) end
+	end)
+	makeButton(scroller, "Reset ALL Client Changes").MouseButton1Click:Connect(resetAll)
+
+	-- status / fps
+	do
+		local last = tick()
+		local frames = 0
+		state.fpsConn = RS.RenderStepped:Connect(function()
+			frames += 1
+			local now = tick()
+			if now - last >= 1 then
+				local fps = frames / (now - last)
+				frames = 0
+				last = now
+				statusBar.Text = string.format("FPS: %d | WS: %d | JP: %d", math.floor(fps+.5), math.floor((humanoid and humanoid.WalkSpeed or 0)), math.floor((humanoid and humanoid.JumpPower or 0)))
+			end
+		end)
+	end
+
+	-- close & toggle
+	closeBtn.MouseButton1Click:Connect(function()
+		frame.Visible = false
+	end)
+	toggleBtn.MouseButton1Click:Connect(function()
+		frame.Visible = not frame.Visible
+	end)
+
+	-- store ui refs
+	state.ui.frame = frame
+	state.ui.statusBar = statusBar
 end
 
--- // LOADER BUTTON
-local loaderBtn = new("TextButton", {
-    Size = UDim2.new(0, UIS.TouchEnabled and 240 or 200, 0, UIS.TouchEnabled and 60 or 48),
-    Position = UDim2.new(0.5, 0, 0.1, 0),
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = neonBlue,
-    Font = Enum.Font.GothamBold,
-    TextSize = UIS.TouchEnabled and 20 or 18,
-    TextColor3 = neonPink,
-    Text = "Load SX Cyberpunk Panel",
-    AutoButtonColor = false
-}, playerGui)
-corner(loaderBtn, 12); stroke(loaderBtn, neonPink, 3)
+------------------------------
+-- LOADER BUTTON (floating, mobile friendly)
+------------------------------
+local loaderGui = Instance.new("ScreenGui")
+loaderGui.Name = "SX_Loader"
+loaderGui.ResetOnSpawn = false
+loaderGui.IgnoreGuiInset = true
+loaderGui.Parent = playerGui
 
-loaderBtn.MouseButton1Click:Connect(function()
-    panelLoaded = not panelLoaded
-    if panelLoaded then
-        buildPanel()
-        loaderBtn.Text = "Unload SX Panel"
-    else
-        if panelGui then panelGui:Destroy() panelGui = nil end
-        loaderBtn.Text = "Load SX Cyberpunk Panel"
-    end
+local loaderBtn = Instance.new("TextButton")
+loaderBtn.Size = UDim2.new(0, 220, 0, 54)
+loaderBtn.Position = UDim2.new(0.5, 0, 0.12, 0)
+loaderBtn.AnchorPoint = Vector2.new(0.5, 0)
+loaderBtn.AutoButtonColor = false
+loaderBtn.BackgroundColor3 = neonBlue
+loaderBtn.TextColor3 = neonPink
+loaderBtn.Font = Enum.Font.GothamBlack
+loaderBtn.TextSize = 18
+loaderBtn.Text = "Load SX Panel"
+makeCorner(loaderBtn, 12)
+makeStroke(loaderBtn, neonPink, 3)
+makeGradient(loaderBtn, Color3.fromRGB(8,50,60), Color3.fromRGB(0,30,40))
+loaderBtn.Parent = loaderGui
+
+-- Hover/press effects (PC + mobile)
+loaderBtn.MouseEnter:Connect(function()
+	tween(loaderBtn, {BackgroundColor3 = Color3.fromRGB(0, 200, 255)}, 0.15)
+end)
+loaderBtn.MouseLeave:Connect(function()
+	tween(loaderBtn, {BackgroundColor3 = neonBlue}, 0.15)
+end)
+loaderBtn.MouseButton1Down:Connect(function()
+	tween(loaderBtn, {TextColor3 = neonYellow}, 0.08)
+end)
+loaderBtn.MouseButton1Up:Connect(function()
+	tween(loaderBtn, {TextColor3 = neonPink}, 0.08)
 end)
 
-print("[SX Cyberpunk Panel Ready | Mobile Friendly]")
--- line_pad_743 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_744 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_745 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_746 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_747 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_748 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_749 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_750 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_751 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_752 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_753 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_754 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_755 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_756 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_757 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_758 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_759 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_760 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_761 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_762 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_763 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_764 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_765 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_766 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_767 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_768 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_769 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_770 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_771 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_772 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_773 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_774 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_775 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_776 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_777 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_778 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_779 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_780 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_781 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_782 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_783 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_784 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_785 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_786 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_787 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_788 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_789 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_790 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_791 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_792 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_793 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_794 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_795 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_796 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_797 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_798 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_799 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_800 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_801 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_802 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_803 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_804 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_805 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_806 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_807 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_808 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_809 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_810 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_811 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_812 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_813 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_814 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_815 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_816 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_817 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_818 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_819 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_820 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_821 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_822 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_823 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_824 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_825 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_826 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_827 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_828 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_829 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_830 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_831 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_832 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_833 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_834 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_835 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_836 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_837 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_838 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_839 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_840 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_841 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_842 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_843 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_844 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_845 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_846 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_847 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_848 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_849 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_850 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_851 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_852 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_853 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_854 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_855 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_856 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_857 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_858 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_859 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_860 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_861 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_862 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_863 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_864 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_865 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_866 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_867 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_868 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_869 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_870 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_871 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_872 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_873 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_874 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_875 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_876 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_877 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_878 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_879 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_880 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_881 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_882 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_883 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_884 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_885 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_886 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_887 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_888 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_889 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_890 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_891 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_892 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_893 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_894 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_895 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_896 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_897 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_898 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_899 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_900 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_901 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_902 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_903 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_904 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_905 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_906 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_907 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_908 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_909 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_910 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_911 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_912 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_913 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_914 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_915 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_916 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_917 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_918 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_919 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_920 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_921 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_922 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_923 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_924 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_925 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_926 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_927 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_928 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_929 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_930 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_931 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_932 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_933 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_934 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_935 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_936 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_937 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_938 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_939 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_940 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_941 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_942 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_943 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_944 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_945 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_946 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_947 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_948 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_949 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_950 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_951 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_952 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_953 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_954 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_955 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_956 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_957 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_958 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_959 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_960 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_961 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_962 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_963 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_964 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_965 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_966 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_967 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_968 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_969 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_970 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_971 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_972 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_973 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_974 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_975 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_976 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_977 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_978 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_979 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_980 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_981 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_982 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_983 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_984 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_985 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_986 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_987 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_988 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_989 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_990 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_991 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_992 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_993 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_994 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_995 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_996 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_997 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_998 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_999 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
--- line_pad_1000 :: SX Cyberpunk Panel mobile-friendly filler to keep script over 900 lines
+-- Toggle create/destroy panel
+loaderBtn.MouseButton1Click:Connect(function()
+	panelVisible = not panelVisible
+	if panelVisible then
+		buildPanel()
+		loaderBtn.Text = "Unload SX Panel"
+	else
+		-- cleanup
+		resetAll()
+		if panelGui then panelGui:Destroy() panelGui = nil end
+		state.fpsConn = disconnectConn(state.fpsConn)
+		loaderBtn.Text = "Load SX Panel"
+	end
+end)
+
+print("[SX Cyberpunk Panel] Loaded. Mobile-friendly, bugfixed.")
