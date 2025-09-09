@@ -1,5 +1,5 @@
--- SpeedEX 0.Hub - WalkSpeed GUI
--- Place this as a LocalScript inside StarterGui
+-- SpeedEX Hub (Mobile + PC Friendly)
+-- Put this in StarterGui as a LocalScript
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -12,7 +12,7 @@ local humanoid = character:WaitForChild("Humanoid")
 local DEFAULT_SPEED = 16
 local MAX_SPEED = 100
 
--- GUI Setup
+-- GUI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SpeedEXHub"
 screenGui.ResetOnSpawn = false
@@ -55,7 +55,7 @@ closeButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 closeButton.Font = Enum.Font.GothamBold
 closeButton.TextSize = 16
 
--- Dragging
+-- Dragging main window
 do
 	local dragStart, startPos
 	local function update(input)
@@ -66,7 +66,7 @@ do
 		)
 	end
 	titleBar.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragStart, startPos = input.Position, mainFrame.Position
 			local conn
 			conn = input.Changed:Connect(function()
@@ -78,7 +78,7 @@ do
 		end
 	end)
 	titleBar.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement and dragStart then
+		if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragStart then
 			update(input)
 		end
 	end)
@@ -90,7 +90,7 @@ contentFrame.Size = UDim2.new(1, -20, 1, -52)
 contentFrame.Position = UDim2.new(0, 10, 0, 42)
 contentFrame.BackgroundTransparency = 1
 
--- Speed Label
+-- Label
 local speedLabel = Instance.new("TextLabel", contentFrame)
 speedLabel.Size = UDim2.new(1, 0, 0, 24)
 speedLabel.Position = UDim2.new(0, 0, 0, 10)
@@ -101,7 +101,7 @@ speedLabel.Font = Enum.Font.Gotham
 speedLabel.TextSize = 14
 speedLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Slider Bar
+-- Slider
 local speedSlider = Instance.new("Frame", contentFrame)
 speedSlider.Size = UDim2.new(1, 0, 0, 6)
 speedSlider.Position = UDim2.new(0, 0, 0, 40)
@@ -111,7 +111,7 @@ Instance.new("UICorner", speedSlider).CornerRadius = UDim.new(1, 0)
 
 local sliderFill = Instance.new("Frame", speedSlider)
 sliderFill.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
-sliderFill.Size = UDim2.new(0.5, 0, 1, 0)
+sliderFill.Size = UDim2.new(0, 0, 1, 0)
 Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
 
 local sliderButton = Instance.new("TextButton", speedSlider)
@@ -119,9 +119,11 @@ sliderButton.Size = UDim2.new(0, 20, 0, 20)
 sliderButton.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
 sliderButton.BorderSizePixel = 0
 sliderButton.Text = ""
+sliderButton.AnchorPoint = Vector2.new(0.5, 0.5)
+sliderButton.Position = UDim2.new(0, 0, 0.5, 0)
 Instance.new("UICorner", sliderButton).CornerRadius = UDim.new(1, 0)
 
--- Speed Value Display
+-- Speed Value
 local speedValue = Instance.new("TextLabel", contentFrame)
 speedValue.Size = UDim2.new(1, 0, 0, 24)
 speedValue.Position = UDim2.new(0, 0, 0, 70)
@@ -137,15 +139,6 @@ local buttonContainer = Instance.new("Frame", contentFrame)
 buttonContainer.Size = UDim2.new(1, 0, 0, 40)
 buttonContainer.Position = UDim2.new(0, 0, 1, -50)
 buttonContainer.BackgroundTransparency = 1
-
-local applyButton = Instance.new("TextButton", buttonContainer)
-applyButton.Size = UDim2.new(0.45, 0, 1, 0)
-applyButton.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
-applyButton.Text = "APPLY"
-applyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-applyButton.Font = Enum.Font.GothamBold
-applyButton.TextSize = 14
-Instance.new("UICorner", applyButton).CornerRadius = UDim.new(0, 4)
 
 local resetButton = Instance.new("TextButton", buttonContainer)
 resetButton.Size = UDim2.new(0.45, 0, 1, 0)
@@ -171,12 +164,13 @@ Instance.new("UICorner", toggleButton).CornerRadius = UDim.new(0, 8)
 -- SLIDER LOGIC
 local isDragging = false
 
-local function updateSpeed(percent)
+local function updateSlider(percent)
+	percent = math.clamp(percent, 0, 1)
 	local speed = math.floor(percent * MAX_SPEED)
 	speedValue.Text = tostring(speed)
 	sliderFill.Size = UDim2.new(percent, 0, 1, 0)
-	sliderButton.Position = UDim2.new(percent, -10, 0.5, -10)
-	return speed
+	sliderButton.Position = UDim2.new(percent, 0, 0.5, 0)
+	humanoid.WalkSpeed = speed -- live update
 end
 
 local function getPercentFromX(x)
@@ -184,46 +178,45 @@ local function getPercentFromX(x)
 	return rel / speedSlider.AbsoluteSize.X
 end
 
-sliderButton.MouseButton1Down:Connect(function()
+-- Mouse + Touch handling
+local function beginDrag(x)
+	local p = getPercentFromX(x)
+	updateSlider(p)
 	isDragging = true
-end)
+end
 
-UserInputService.InputChanged:Connect(function(input)
-	if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-		local p = getPercentFromX(input.Position.X)
-		updateSpeed(p)
-	end
-end)
+local function endDrag()
+	isDragging = false
+end
 
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		isDragging = false
+sliderButton.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		beginDrag(input.Position.X)
 	end
 end)
 
 speedSlider.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		beginDrag(input.Position.X)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 		local p = getPercentFromX(input.Position.X)
-		updateSpeed(p)
-		isDragging = true
+		updateSlider(p)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		endDrag()
 	end
 end)
 
 -- BUTTONS
-applyButton.MouseButton1Click:Connect(function()
-	local speed = tonumber(speedValue.Text)
-	if speed and speed > 0 and speed <= MAX_SPEED then
-		humanoid.WalkSpeed = speed
-		applyButton.Text, applyButton.BackgroundColor3 = "APPLIED!", Color3.fromRGB(0, 200, 100)
-		task.delay(1, function()
-			applyButton.Text, applyButton.BackgroundColor3 = "APPLY", Color3.fromRGB(0, 162, 255)
-		end)
-	end
-end)
-
 resetButton.MouseButton1Click:Connect(function()
-	updateSpeed(DEFAULT_SPEED / MAX_SPEED)
-	humanoid.WalkSpeed = DEFAULT_SPEED
+	updateSlider(DEFAULT_SPEED / MAX_SPEED)
 end)
 
 closeButton.MouseButton1Click:Connect(function()
@@ -235,10 +228,10 @@ toggleButton.MouseButton1Click:Connect(function()
 end)
 
 -- INIT
-updateSpeed(DEFAULT_SPEED / MAX_SPEED)
+updateSlider(DEFAULT_SPEED / MAX_SPEED)
 humanoid.WalkSpeed = DEFAULT_SPEED
 
--- Hotkey (RightShift)
+-- Hotkey (RightShift for PC)
 UserInputService.InputBegan:Connect(function(input, gpe)
 	if not gpe and input.KeyCode == Enum.KeyCode.RightShift then
 		mainFrame.Visible = not mainFrame.Visible
