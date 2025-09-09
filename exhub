@@ -1,389 +1,257 @@
--- SpeedEX Hub - Mobile + PC Friendly (LocalScript for StarterGui)
--- Paste this as a LocalScript inside StarterGui
+-- Test Exploit Panel (for Anti-Cheat Testing)
+-- LocalScript inside StarterGui
 
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Settings
-local DEFAULT_SPEED = 16
-local MAX_SPEED = 100
-
--- Keep humanoid up-to-date (handles respawn)
-local humanoid
-local function onCharacterAdded(char)
-	humanoid = char:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		-- wait for humanoid but don't block forever
-		humanoid = char:WaitForChild("Humanoid")
-	end
-end
 local character = player.Character or player.CharacterAdded:Wait()
-onCharacterAdded(character)
-player.CharacterAdded:Connect(onCharacterAdded)
+local humanoid = character:WaitForChild("Humanoid")
 
--- Helper: safe set WalkSpeed
-local function safeSetWalkSpeed(value)
-	if typeof(value) ~= "number" then return end
-	if value < 0 then value = 0 end
-	if value > MAX_SPEED then value = MAX_SPEED end
-	if humanoid and humanoid.Parent then
-		-- protect in pcall in case of read-only or other errors
-		pcall(function() humanoid.WalkSpeed = value end)
-	end
+-- Create main GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "TestExploitPanel"
+gui.ResetOnSpawn = false
+gui.Parent = player.PlayerGui
+
+-- Main draggable frame
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 300, 0, 420)
+frame.Position = UDim2.new(0.5, -150, 0.5, -210)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+frame.Active = true
+frame.Draggable = true -- works for both PC + mobile
+frame.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = frame
+
+-- Title bar
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+title.Text = "Anti-Cheat Test Panel"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.Parent = frame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = title
+
+-- Scrollable content
+local scrolling = Instance.new("ScrollingFrame")
+scrolling.Size = UDim2.new(1, -10, 1, -40)
+scrolling.Position = UDim2.new(0, 5, 0, 35)
+scrolling.CanvasSize = UDim2.new(0,0,0,600)
+scrolling.ScrollBarThickness = 6
+scrolling.BackgroundTransparency = 1
+scrolling.Parent = frame
+
+-- Helpers
+local function makeButton(name, text, posY)
+	local btn = Instance.new("TextButton")
+	btn.Name = name
+	btn.Size = UDim2.new(1, -20, 0, 30)
+	btn.Position = UDim2.new(0, 10, 0, posY)
+	btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	btn.Text = text
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Font = Enum.Font.Gotham
+	btn.TextSize = 14
+	btn.Parent = scrolling
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = btn
+	return btn
 end
 
--- Create ScreenGui
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "SpeedEXHub"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = playerGui
+local function makeSlider(name, label, posY, min, max, default)
+	local container = Instance.new("Frame")
+	container.Name = name.."Container"
+	container.Size = UDim2.new(1, -20, 0, 60)
+	container.Position = UDim2.new(0, 10, 0, posY)
+	container.BackgroundTransparency = 1
+	container.Parent = scrolling
 
--- MAIN WINDOW
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 360, 0, 260)
-mainFrame.Position = UDim2.new(0.5, -180, 0.5, -130)
-mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20,20,25)
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
-mainFrame.Visible = false
-local mc = Instance.new("UICorner", mainFrame)
-mc.CornerRadius = UDim.new(0,10)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, 0, 0, 20)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = label
+	lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+	lbl.Font = Enum.Font.Gotham
+	lbl.TextSize = 14
+	lbl.Parent = container
 
--- TITLE BAR (drag)
-local titleBar = Instance.new("Frame", mainFrame)
-titleBar.Size = UDim2.new(1,0,0,36)
-titleBar.BackgroundColor3 = Color3.fromRGB(15,15,20)
-titleBar.BorderSizePixel = 0
-local tc = Instance.new("UICorner", titleBar)
-tc.CornerRadius = UDim.new(0,10)
+	local bar = Instance.new("Frame")
+	bar.Size = UDim2.new(1, 0, 0, 6)
+	bar.Position = UDim2.new(0, 0, 0, 25)
+	bar.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	bar.Parent = container
+	local barCorner = Instance.new("UICorner")
+	barCorner.CornerRadius = UDim.new(1,0)
+	barCorner.Parent = bar
 
-local titleLabel = Instance.new("TextLabel", titleBar)
-titleLabel.Size = UDim2.new(1,-40,1,0)
-titleLabel.Position = UDim2.new(0,12,0,0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "SpeedEX Hub"
-titleLabel.TextColor3 = Color3.fromRGB(230,230,230)
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 16
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new((default-min)/(max-min), 0, 1, 0)
+	fill.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
+	fill.Parent = bar
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(1,0)
+	fillCorner.Parent = fill
 
-local closeBtn = Instance.new("TextButton", titleBar)
-closeBtn.Size = UDim2.new(0,36,0,36)
-closeBtn.Position = UDim2.new(1,-36,0,0)
-closeBtn.BackgroundTransparency = 1
-closeBtn.Text = "X"
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextColor3 = Color3.fromRGB(230,230,230)
-closeBtn.TextSize = 16
+	local knob = Instance.new("TextButton")
+	knob.Size = UDim2.new(0, 20, 0, 20)
+	knob.Position = UDim2.new(fill.Size.X.Scale, -10, 0, -7)
+	knob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+	knob.Text = ""
+	knob.Parent = bar
+	local knobCorner = Instance.new("UICorner")
+	knobCorner.CornerRadius = UDim.new(1,0)
+	knobCorner.Parent = knob
 
--- Toggle button (always visible)
-local toggleBtn = Instance.new("TextButton", screenGui)
-toggleBtn.Size = UDim2.new(0,44,0,44)
-toggleBtn.Position = UDim2.new(0,12,0,12)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(0,162,255)
-toggleBtn.Text = "S"
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 18
-toggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
-local tbcorner = Instance.new("UICorner", toggleBtn)
-tbcorner.CornerRadius = UDim.new(0,10)
+	local valLbl = Instance.new("TextLabel")
+	valLbl.Size = UDim2.new(1, 0, 0, 20)
+	valLbl.Position = UDim2.new(0,0,0,40)
+	valLbl.BackgroundTransparency = 1
+	valLbl.Text = tostring(default)
+	valLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+	valLbl.Font = Enum.Font.Gotham
+	valLbl.TextSize = 14
+	valLbl.Parent = container
 
--- Dragging main window (supports touch & mouse)
-do
 	local dragging = false
-	local dragStartPos, startPos
-	local function update(input)
-		if not dragging or not dragStartPos then return end
-		local delta = input.Position - dragStartPos
-		mainFrame.Position = UDim2.new(
-			startPos.X.Scale, startPos.X.Offset + delta.X,
-			startPos.Y.Scale, startPos.Y.Offset + delta.Y
-		)
+
+	local function update(x)
+		local percent = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		fill.Size = UDim2.new(percent,0,1,0)
+		knob.Position = UDim2.new(percent,-10,0,-7)
+		local val = math.floor(min + (max-min)*percent)
+		valLbl.Text = tostring(val)
+		return val
 	end
 
-	titleBar.InputBegan:Connect(function(input)
+	knob.MouseButton1Down:Connect(function()
+		dragging = true
+	end)
+
+	UIS.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			dragStartPos = input.Position
-			startPos = mainFrame.Position
-			-- disconnect on end
-			local conn
-			conn = input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					dragging = false
-					dragStartPos = nil
-					conn:Disconnect()
-				end
-			end)
+			dragging = false
 		end
 	end)
 
-	titleBar.InputChanged:Connect(function(input)
-		if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragging then
-			update(input)
+	UIS.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local val = update(input.Position.X)
+			container.Value = val
 		end
 	end)
+
+	bar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			local val = update(input.Position.X)
+			container.Value = val
+		end
+	end)
+
+	container.Value = default
+	return container
 end
 
--- CONTENT
-local content = Instance.new("Frame", mainFrame)
-content.Size = UDim2.new(1,-24,1,-60)
-content.Position = UDim2.new(0,12,0,44)
-content.BackgroundTransparency = 1
+-- Features
+local speedSlider = makeSlider("SpeedSlider", "WalkSpeed", 10, 16, 100, 16)
+local jumpSlider = makeSlider("JumpSlider", "JumpPower", 80, 50, 200, 50)
 
--- Label
-local lbl = Instance.new("TextLabel", content)
-lbl.Size = UDim2.new(1,0,0,22)
-lbl.Position = UDim2.new(0,0,0,0)
-lbl.BackgroundTransparency = 1
-lbl.Text = "WALKSPEED"
-lbl.TextColor3 = Color3.fromRGB(180,180,190)
-lbl.Font = Enum.Font.Gotham
-lbl.TextSize = 14
-lbl.TextXAlignment = Enum.TextXAlignment.Left
+local flyBtn = makeButton("FlyBtn", "Toggle Fly", 150)
+local noclipBtn = makeButton("NoclipBtn", "Toggle Noclip", 190)
+local infJumpBtn = makeButton("InfJumpBtn", "Toggle Infinite Jump", 230)
+local tpBtn = makeButton("TpBtn", "Teleport Up 50", 270)
+local remoteBtn = makeButton("RemoteBtn", "Spam RemoteEvent", 310)
 
--- Slider bar
-local sliderBar = Instance.new("Frame", content)
-sliderBar.Size = UDim2.new(1,0,0,8)
-sliderBar.Position = UDim2.new(0,0,0,34)
-sliderBar.BackgroundColor3 = Color3.fromRGB(48,48,56)
-sliderBar.BorderSizePixel = 0
-local sliderCorner = Instance.new("UICorner", sliderBar); sliderCorner.CornerRadius = UDim.new(1,0)
+-- Behavior
+local flying = false
+local noclip = false
+local infJump = false
 
-local sliderFill = Instance.new("Frame", sliderBar)
-sliderFill.Size = UDim2.new(0,0,1,0)
-sliderFill.BackgroundColor3 = Color3.fromRGB(0,162,255)
-local fillCorner = Instance.new("UICorner", sliderFill); fillCorner.CornerRadius = UDim.new(1,0)
+speedSlider:GetPropertyChangedSignal("Value"):Connect(function()
+	humanoid.WalkSpeed = speedSlider.Value
+end)
 
-local handle = Instance.new("ImageButton", sliderBar)
-handle.Size = UDim2.new(0,28,0,28)
-handle.AnchorPoint = Vector2.new(0.5,0.5)
-handle.Position = UDim2.new(0,0,0.5,0)
-handle.BackgroundTransparency = 1
-handle.Image = "" -- use simple rectangle via background if you like; keep blank for speed
-local handleBg = Instance.new("Frame", handle)
-handleBg.Size = UDim2.new(1,-4,1,-4)
-handleBg.Position = UDim2.new(0,2,0,2)
-handleBg.BackgroundColor3 = Color3.fromRGB(242,242,242)
-handleBg.BorderSizePixel = 0
-handleBg.AnchorPoint = Vector2.new(0,0)
-local handleCorner = Instance.new("UICorner", handleBg); handleCorner.CornerRadius = UDim.new(1,0)
+jumpSlider:GetPropertyChangedSignal("Value"):Connect(function()
+	humanoid.JumpPower = jumpSlider.Value
+end)
 
--- Value display + editable textbox (mobile friendly)
-local valueFrame = Instance.new("Frame", content)
-valueFrame.Size = UDim2.new(1,0,0,36)
-valueFrame.Position = UDim2.new(0,0,0,64)
-valueFrame.BackgroundTransparency = 1
-
-local valueLabel = Instance.new("TextLabel", valueFrame)
-valueLabel.Size = UDim2.new(0.5,0,1,0)
-valueLabel.Position = UDim2.new(0,0,0,0)
-valueLabel.BackgroundTransparency = 1
-valueLabel.Text = "Speed:"
-valueLabel.Font = Enum.Font.Gotham
-valueLabel.TextSize = 14
-valueLabel.TextColor3 = Color3.fromRGB(200,200,200)
-valueLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-local valueBox = Instance.new("TextBox", valueFrame)
-valueBox.Size = UDim2.new(0.5,-4,1,0)
-valueBox.Position = UDim2.new(0.5,4,0,0)
-valueBox.BackgroundColor3 = Color3.fromRGB(30,30,36)
-valueBox.TextColor3 = Color3.fromRGB(230,230,230)
-valueBox.ClearTextOnFocus = false
-valueBox.PlaceholderText = tostring(DEFAULT_SPEED)
-valueBox.Text = tostring(DEFAULT_SPEED)
-valueBox.Font = Enum.Font.GothamBold
-valueBox.TextSize = 16
-valueBox.TextXAlignment = Enum.TextXAlignment.Center
-local vbCorner = Instance.new("UICorner", valueBox); vbCorner.CornerRadius = UDim.new(0,6)
-
--- Buttons row (Default, Max, Reset, Apply)
-local btnRow = Instance.new("Frame", content)
-btnRow.Size = UDim2.new(1,0,0,40)
-btnRow.Position = UDim2.new(0,0,1,-44)
-btnRow.BackgroundTransparency = 1
-
-local function makeBtn(text, posScale)
-	local b = Instance.new("TextButton", btnRow)
-	b.Size = UDim2.new(0.22,0,1,0)
-	b.Position = UDim2.new(posScale, 8*(posScale*4), 0, 0) -- spaced roughly
-	b.Text = text
-	b.Font = Enum.Font.GothamBold
-	b.TextSize = 14
-	b.TextColor3 = Color3.fromRGB(230,230,230)
-	b.BackgroundColor3 = Color3.fromRGB(60,60,70)
-	local c = Instance.new("UICorner", b); c.CornerRadius = UDim.new(0,6)
-	return b
-end
-
-local btnDefault = makeBtn("Default", 0)
-local btnPlus = makeBtn("+10", 0.26)
-local btnMinus = makeBtn("-10", 0.52)
-local btnMax = makeBtn("Max", 0.78)
-
--- state
-local dragging = false
-
--- convert number -> percent [0,1]
-local function speedToPercent(speed)
-	speed = tonumber(speed) or DEFAULT_SPEED
-	return math.clamp(speed / MAX_SPEED, 0, 1)
-end
-
--- convert percent -> speed integer for display
-local function percentToSpeed(p)
-	return math.floor(math.clamp(p,0,1) * MAX_SPEED + 0.5)
-end
-
--- Update slider visuals & optionally set walk speed (liveFlag)
-local function updateSlider(percent, liveFlag)
-	percent = math.clamp(percent, 0, 1)
-	sliderFill.Size = UDim2.new(percent, 0, 1, 0)
-	handle.Position = UDim2.new(percent, 0, 0.5, 0)
-	local speed = percentToSpeed(percent)
-	valueBox.Text = tostring(speed)
-	if liveFlag then
-		safeSetWalkSpeed(speed)
-	end
-end
-
--- compute percent from screen X (pointer)
-local function percentFromX(x)
-	local pos = sliderBar.AbsolutePosition
-	local size = sliderBar.AbsoluteSize
-	if size.X <= 0 then return 0 end
-	local rel = math.clamp(x - pos.X, 0, size.X)
-	return rel / size.X
-end
-
--- begin drag with initial X
-local function beginDragFromX(x)
-	dragging = true
-	local p = percentFromX(x)
-	-- live update while dragging
-	updateSlider(p, true)
-end
-
--- end drag
-local function endDrag()
-	dragging = false
-end
-
--- Input handlers (touch + mouse)
-handle.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		beginDragFromX(input.Position.X)
-		-- track end on input changed end
-		local conn
-		conn = input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				endDrag()
-				conn:Disconnect()
+flyBtn.MouseButton1Click:Connect(function()
+	flying = not flying
+	if flying then
+		flyBtn.BackgroundColor3 = Color3.fromRGB(0,200,100)
+		RS.RenderStepped:Connect(function()
+			if flying and character and character:FindFirstChild("HumanoidRootPart") then
+				local move = Vector3.new()
+				if UIS:IsKeyDown(Enum.KeyCode.W) then move = move + Vector3.new(0,0,-1) end
+				if UIS:IsKeyDown(Enum.KeyCode.S) then move = move + Vector3.new(0,0,1) end
+				if UIS:IsKeyDown(Enum.KeyCode.A) then move = move + Vector3.new(-1,0,0) end
+				if UIS:IsKeyDown(Enum.KeyCode.D) then move = move + Vector3.new(1,0,0) end
+				if UIS:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
+				if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then move = move + Vector3.new(0,-1,0) end
+				character:TranslateBy(move * 1.5)
 			end
 		end)
-	end
-end)
-
-sliderBar.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		beginDragFromX(input.Position.X)
-		local conn
-		conn = input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				endDrag()
-				conn:Disconnect()
-			end
-		end)
-	end
-end)
-
--- Global input changed for mouse movement / touch move
-UserInputService.InputChanged:Connect(function(input)
-	if not dragging then return end
-	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		local x = input.Position.X
-		local p = percentFromX(x)
-		updateSlider(p, true)
-	end
-end)
-
--- For safety also listen to InputEnded (covers some edge cases)
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		endDrag()
-	end
-end)
-
--- Buttons functionality
-btnDefault.MouseButton1Click:Connect(function()
-	local p = speedToPercent(DEFAULT_SPEED)
-	updateSlider(p, true)
-end)
-
-btnMax.MouseButton1Click:Connect(function()
-	local p = speedToPercent(MAX_SPEED)
-	updateSlider(p, true)
-end)
-
-btnPlus.MouseButton1Click:Connect(function()
-	local cur = tonumber(valueBox.Text) or percentToSpeed(sliderFill.Size.X.Scale)
-	cur = math.min(MAX_SPEED, cur + 10)
-	updateSlider(speedToPercent(cur), true)
-end)
-
-btnMinus.MouseButton1Click:Connect(function()
-	local cur = tonumber(valueBox.Text) or percentToSpeed(sliderFill.Size.X.Scale)
-	cur = math.max(0, cur - 10)
-	updateSlider(speedToPercent(cur), true)
-end)
-
--- valueBox commits on Enter or focus lost
-valueBox.FocusLost:Connect(function(enterPressed)
-	local raw = valueBox.Text or ""
-	local num = tonumber(raw)
-	if num then
-		num = math.clamp(math.floor(num + 0.5), 0, MAX_SPEED)
-		updateSlider(speedToPercent(num), true)
 	else
-		-- restore displayed value
-		local cur = percentToSpeed(sliderFill.Size.X.Scale)
-		valueBox.Text = tostring(cur)
+		flyBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
 	end
 end)
 
--- Close & Toggle
-closeBtn.MouseButton1Click:Connect(function()
-	mainFrame.Visible = false
-end)
-
-toggleBtn.MouseButton1Click:Connect(function()
-	mainFrame.Visible = not mainFrame.Visible
-end)
-
--- Hotkey (PC)
-UserInputService.InputBegan:Connect(function(input, gpe)
-	if gpe then return end
-	if input.KeyCode == Enum.KeyCode.RightShift or input.KeyCode == Enum.KeyCode.LeftShift then
-		mainFrame.Visible = not mainFrame.Visible
+noclipBtn.MouseButton1Click:Connect(function()
+	noclip = not noclip
+	if noclip then
+		noclipBtn.BackgroundColor3 = Color3.fromRGB(0,200,100)
+	else
+		noclipBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
 	end
 end)
 
--- Initialize UI values
-updateSlider(speedToPercent(DEFAULT_SPEED), true)
-safeSetWalkSpeed(DEFAULT_SPEED)
+RS.Stepped:Connect(function()
+	if noclip and character then
+		for _,v in pairs(character:GetDescendants()) do
+			if v:IsA("BasePart") and v.CanCollide then
+				v.CanCollide = false
+			end
+		end
+	end
+end)
 
--- Ensure slider visuals are correct once UI has rendered
-local renderedConn
-renderedConn = RunService.Heartbeat:Connect(function()
-	if sliderBar.AbsoluteSize.X > 0 then
-		updateSlider(speedToPercent(tonumber(valueBox.Text) or DEFAULT_SPEED), true)
-		renderedConn:Disconnect()
+infJumpBtn.MouseButton1Click:Connect(function()
+	infJump = not infJump
+	if infJump then
+		infJumpBtn.BackgroundColor3 = Color3.fromRGB(0,200,100)
+	else
+		infJumpBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+	end
+end)
+
+UIS.JumpRequest:Connect(function()
+	if infJump then
+		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+	end
+end)
+
+tpBtn.MouseButton1Click:Connect(function()
+	if character and character:FindFirstChild("HumanoidRootPart") then
+		character.HumanoidRootPart.CFrame *= CFrame.new(0,50,0)
+	end
+end)
+
+remoteBtn.MouseButton1Click:Connect(function()
+	local remote = ReplicatedStorage:FindFirstChild("ExploitTestEvent")
+	if remote and remote:IsA("RemoteEvent") then
+		for i=1,20 do
+			remote:FireServer("ExploitTest")
+		end
 	end
 end)
