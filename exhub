@@ -1,1024 +1,1447 @@
 --[[
 
-SX Cyberpunk Admin Hub — Single LocalScript
-Put this file as a LocalScript in StarterGui.
-Client-side, for your own place/testing.
+    SX Cyberpunk Admin Panel (Mobile-Friendly, Hoverable, One-File LocalScript)
+    ----------------------------------------------------------------------------
+    Drop this as a LocalScript inside StarterGui in YOUR OWN PLACE for testing.
 
-Design goals:
-- Sidebar hub like your screenshots (tabs + collapsible sections)
-- Hoverable neon look (Cyberpunk 2077 vibe)
-- Mobile friendly (big touch targets, scroll, draggable)
-- Many admin-style commands (self + target tools)
-- Load/Unload button, robust, no deprecated behaviors causing crashes
+    ⚠️ Notes
+    - Client-side script. "Target/Server" commands that need server authority
+      will attempt to use ReplicatedStorage.ExploitTestEvent (RemoteEvent).
+      If no server handler exists, the UI will show a toast and skip the action.
+    - Designed for mobile + PC. Smaller window, big tap zones, scrollable tabs.
+    - Hover effects on PC, smooth tweens, neon cyberpunk style.
+
+    Includes (Self + Target + World + Utility + Presets):
+    - Self: WalkSpeed/JumpPower sliders, Fly, Noclip, Infinite Jump, Godlike Heal,
+            Invis (local visual), Ragdoll, Sit/Unsit, Blink, Teleport Up, Spin
+    - Target: Select player (search), Teleport To, Bring, Freeze, Thaw, Fling,
+              Kill, Heal, Sit/Unsit, Spin, Annoy; (via RemoteEvent if available)
+    - World: Gravity toggle, Day/Night, Night Vision, Neon Outline, Slow-Mo blink,
+             Clear Effects
+    - Utility: Rejoin, Server Hop (best-effort), Copy Position, Print Debug,
+               Respawn, Reset All
+    - Presets: Speedy, Moon, Parkour, Default
+
+    UI/UX:
+    - Auto-select first tab so "commands load" immediately.
+    - Auto-expanding scroll areas (no clipped content).
+    - Draggable via title bar (mouse + touch).
+    - Toggle visibility with button or F4 (PC).
 
 ]]--
 
---// SERVICES
+-- // SERVICES
 local Players            = game:GetService("Players")
-local UIS                = game:GetService("UserInputService")
-local RS                 = game:GetService("RunService")
+local UserInputService   = game:GetService("UserInputService")
+local RunService         = game:GetService("RunService")
 local TweenService       = game:GetService("TweenService")
-local Lighting           = game:GetService("Lighting")
-local TeleportService    = game:GetService("TeleportService")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local StarterGui         = game:GetService("StarterGui")
+local TeleportService    = game:GetService("TeleportService")
+local Lighting           = game:GetService("Lighting")
+local HttpService        = game:GetService("HttpService")
+local StarterPlayer      = game:GetService("StarterPlayer")
 
---// PLAYER
+-- // PLAYER/CHAR
 local LocalPlayer        = Players.LocalPlayer
 local PlayerGui          = LocalPlayer:WaitForChild("PlayerGui")
 
-local function getCharacter()
-	local c = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-	local h = c:FindFirstChildOfClass("Humanoid") or c:WaitForChild("Humanoid")
-	return c, h
-end
+local Character          = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid           = Character:FindFirstChildOfClass("Humanoid") or Character:WaitForChild("Humanoid")
 
-local Character, Humanoid = getCharacter()
-LocalPlayer.CharacterAdded:Connect(function(c)
-	Character = c
-	Humanoid = c:WaitForChild("Humanoid")
+LocalPlayer.CharacterAdded:Connect(function(char)
+    Character = char
+    Humanoid  = char:WaitForChild("Humanoid")
 end)
 
---// THEME
-local COLOR_BG           = Color3.fromRGB(17, 17, 22)
-local COLOR_BG_SOFT      = Color3.fromRGB(12, 12, 16)
-local COLOR_NEON_PINK    = Color3.fromRGB(255, 0, 128)
-local COLOR_NEON_BLUE    = Color3.fromRGB(0, 255, 255)
-local COLOR_NEON_YELLOW  = Color3.fromRGB(255, 255, 0)
-local COLOR_TEXT         = Color3.fromRGB(220, 230, 240)
+-- // SETTINGS
+local DEFAULT_SPEED      = 16
+local MAX_SPEED          = 300
 
---// STATE
-local HubGui             = nil
-local Tabs               = {}
-local ActiveTab          = nil
-local Connections        = {}
-local Toggles            = {}
-local FlyConn            = nil
-local NoclipConn         = nil
-local InfJumpConn        = nil
-local ESPFolder          = nil
-local CurrentTarget      = nil
-local Dragging           = false
+local DEFAULT_JUMP       = 50
+local MAX_JUMP           = 400
 
---// UTIL
-local function tween(i, t, props)
-	return TweenService:Create(i, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
+local MOBILE_SAFE_WIDTH  = 600  -- px
+local MOBILE_SAFE_HEIGHT = 420  -- px
+
+-- // REMOTES (OPTIONAL, FOR TARGET/SERVER COMMANDS)
+local SERVER_REMOTE_NAME = "ExploitTestEvent" -- expect: RemoteEvent in ReplicatedStorage
+local ServerRemote       = ReplicatedStorage:FindFirstChild(SERVER_REMOTE_NAME)
+
+-- // THEME (CYBERPUNK)
+local COLOR_BG_DARK      = Color3.fromRGB(10, 10, 14)
+local COLOR_BG_PANEL     = Color3.fromRGB(16, 16, 22)
+local COLOR_ACENT_BLUE   = Color3.fromRGB(0, 255, 255)
+local COLOR_ACENT_PINK   = Color3.fromRGB(255, 0, 128)
+local COLOR_ACENT_YELLOW = Color3.fromRGB(255, 255, 0)
+local COLOR_TEXT_MAIN    = Color3.fromRGB(230, 230, 240)
+local COLOR_TEXT_DIM     = Color3.fromRGB(170, 170, 185)
+local COLOR_BTN_IDLE     = Color3.fromRGB(30, 30, 40)
+local COLOR_BTN_HOVER    = Color3.fromRGB(45, 45, 60)
+local COLOR_GOOD         = Color3.fromRGB(0, 200, 120)
+local COLOR_BAD          = Color3.fromRGB(255, 70, 80)
+
+-- // STATE
+local PanelGui           = nil
+local MainFrame          = nil
+local Sidebar            = nil
+local ContentHolder      = nil
+local CurrentTab         = nil
+local Connections        = {}    -- for toggles (fly/noclip/infinite-jump)
+local IsVisible          = true
+
+-- Utility: safe disconnect
+local function safeDisconnect(conn)
+    if conn then
+        pcall(function() conn:Disconnect() end)
+    end
 end
 
-local function clearConnections(list)
-	for k,conn in pairs(list) do
-		if typeof(conn) == "RBXScriptConnection" then
-			conn:Disconnect()
-		end
-		list[k] = nil
-	end
+-- Utility: store/clear named connection
+local NamedConnections = {}
+
+local function setNamedConn(name, conn)
+    if NamedConnections[name] then
+        safeDisconnect(NamedConnections[name])
+        NamedConnections[name] = nil
+    end
+    NamedConnections[name] = conn
 end
 
-local function safeHumanoid()
-	if not Humanoid or not Humanoid.Parent then
-		Character, Humanoid = getCharacter()
-	end
-	return Humanoid
+local function clearNamedConn(name)
+    if NamedConnections[name] then
+        safeDisconnect(NamedConnections[name])
+        NamedConnections[name] = nil
+    end
 end
 
-local function rootPart()
-	if Character then
-		return Character:FindFirstChild("HumanoidRootPart")
-	end
+-- // TOAST (tiny top-right notifications)
+local function makeToastLayer(parent)
+    local layer = Instance.new("Frame")
+    layer.Name = "ToastLayer"
+    layer.AnchorPoint = Vector2.new(1, 0)
+    layer.Size = UDim2.fromOffset(260, 1)
+    layer.Position = UDim2.new(1, -8, 0, 8)
+    layer.BackgroundTransparency = 1
+    layer.ZIndex = 1000
+    layer.Parent = parent
+    return layer
 end
 
-local function announce(text)
-	pcall(function()
-		StarterGui:SetCore("SendNotification", {
-			Title = "SX Admin Hub";
-			Text  = text;
-			Duration = 3;
-		})
-	end)
+local ToastLayer = nil
+
+local function showToast(text, color)
+    if not ToastLayer then return end
+
+    local holder = Instance.new("Frame")
+    holder.Name = "Toast"
+    holder.Size = UDim2.new(1, 0, 0, 40)
+    holder.BackgroundTransparency = 1
+    holder.ClipsDescendants = false
+    holder.Parent = ToastLayer
+
+    local bg = Instance.new("Frame")
+    bg.Name = "BG"
+    bg.BackgroundColor3 = COLOR_BG_PANEL
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.Position = UDim2.new(1, 12, 0, 0) -- slide in from right
+    bg.Parent = holder
+
+    local corner = Instance.new("UICorner", bg)
+    corner.CornerRadius = UDim.new(0, 10)
+
+    local stroke = Instance.new("UIStroke", bg)
+    stroke.Thickness = 2
+    stroke.Color = color or COLOR_ACENT_BLUE
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = COLOR_TEXT_MAIN
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 14
+    lbl.TextWrapped = true
+    lbl.TextXAlignment = Enum.TextXAlignment.Center
+    lbl.Size = UDim2.new(1, -16, 1, -8)
+    lbl.Position = UDim2.new(0, 8, 0, 4)
+    lbl.Parent = bg
+
+    -- layout stack
+    local list = ToastLayer:FindFirstChildOfClass("UIListLayout")
+    if not list then
+        list = Instance.new("UIListLayout")
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Padding = UDim.new(0, 8)
+        list.Parent = ToastLayer
+    end
+
+    -- animate in
+    TweenService:Create(bg, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0, 0, 0, 0)
+    }):Play()
+
+    -- lifetime then out
+    task.delay(2.2, function()
+        local tween = TweenService:Create(bg, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(1, 12, 0, 0),
+            BackgroundTransparency = 1
+        })
+        tween:Play()
+        tween.Completed:Wait()
+        holder:Destroy()
+    end)
 end
 
---// UI BUILDERS
-local function makeStroke(parent, color, thickness)
-	local s = Instance.new("UIStroke")
-	s.Color = color
-	s.Thickness = thickness or 1
-	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	s.Parent = parent
-	return s
+-- // HOVER STYLE
+local function applyHover(button, primaryStrokeColor)
+    button.AutoButtonColor = false
+
+    local over = false
+
+    local function setHover(isOver)
+        local bgTarget  = isOver and COLOR_BTN_HOVER or COLOR_BTN_IDLE
+        local txtTarget = isOver and COLOR_ACENT_YELLOW or COLOR_ACENT_BLUE
+        TweenService:Create(button, TweenInfo.new(0.15), {
+            BackgroundColor3 = bgTarget,
+            TextColor3 = txtTarget
+        }):Play()
+    end
+
+    button.MouseEnter:Connect(function()
+        over = true
+        setHover(true)
+    end)
+
+    button.MouseLeave:Connect(function()
+        over = false
+        setHover(false)
+    end)
+
+    -- subtle press tween
+    button.MouseButton1Down:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.07), {
+            Position = button.Position + UDim2.fromOffset(0, 1)
+        }):Play()
+    end)
+    button.MouseButton1Up:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.07), {
+            Position = button.Position - UDim2.fromOffset(0, 1)
+        }):Play()
+    end)
+
+    -- stroke (glow)
+    local stroke = Instance.new("UIStroke", button)
+    stroke.Thickness = 2
+    stroke.Color = primaryStrokeColor or COLOR_ACENT_PINK
 end
 
-local function makeCorner(parent, r)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, r or 10)
-	c.Parent = parent
-	return c
+-- // BUTTON MAKER
+local function makeButton(parent, text)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 44)
+    b.Position = UDim2.new(0, 10, 0, 0)
+    b.BackgroundColor3 = COLOR_BTN_IDLE
+    b.TextColor3 = COLOR_ACENT_BLUE
+    b.Text = text
+    b.Font = Enum.Font.GothamSemibold
+    b.TextSize = 16
+    b.AutoButtonColor = false
+    b.Parent = parent
+
+    local corner = Instance.new("UICorner", b)
+    corner.CornerRadius = UDim.new(0, 10)
+
+    applyHover(b, COLOR_ACENT_PINK)
+
+    return b
 end
 
-local function hoverable(button, bgDefault, bgHover, textDefault, textHover)
-	button.MouseEnter:Connect(function()
-		tween(button, 0.15, {BackgroundColor3 = bgHover, TextColor3 = textHover}):Play()
-	end)
-	button.MouseLeave:Connect(function()
-		tween(button, 0.15, {BackgroundColor3 = bgDefault, TextColor3 = textDefault}):Play()
-	end)
+-- // TOGGLE PILL
+local function makeToggle(parent, labelText, initial)
+    local holder = Instance.new("Frame")
+    holder.Name = "Toggle_" .. labelText
+    holder.Size = UDim2.new(1, -20, 0, 48)
+    holder.Position = UDim2.new(0, 10, 0, 0)
+    holder.BackgroundColor3 = COLOR_BG_PANEL
+    holder.Parent = parent
+
+    local corner = Instance.new("UICorner", holder)
+    corner.CornerRadius = UDim.new(0, 12)
+
+    local stroke = Instance.new("UIStroke", holder)
+    stroke.Thickness = 2
+    stroke.Color = COLOR_ACENT_BLUE
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 15
+    lbl.TextColor3 = COLOR_TEXT_MAIN
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Size = UDim2.new(1, -80, 1, 0)
+    lbl.Position = UDim2.new(0, 12, 0, 0)
+    lbl.Parent = holder
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 80, 0, 32)
+    btn.Position = UDim2.new(1, -92, 0.5, -16)
+    btn.BackgroundColor3 = initial and COLOR_GOOD or COLOR_BTN_IDLE
+    btn.Text = initial and "ON" or "OFF"
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 14
+    btn.AutoButtonColor = false
+    btn.Parent = holder
+
+    local bc = Instance.new("UICorner", btn)
+    bc.CornerRadius = UDim.new(1, 0)
+
+    applyHover(btn, COLOR_ACENT_PINK)
+
+    local state = initial
+
+    local function setState(val)
+        state = val
+        TweenService:Create(btn, TweenInfo.new(0.15), {
+            BackgroundColor3 = val and COLOR_GOOD or COLOR_BTN_IDLE
+        }):Play()
+        btn.Text = val and "ON" or "OFF"
+    end
+
+    return holder, btn, function() return state end, setState
 end
 
-local function makeButton(parent, text, height)
-	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(1, -20, 0, height or 44)
-	b.BackgroundColor3 = COLOR_BG_SOFT
-	b.BorderSizePixel = 0
-	b.AutoButtonColor = false
-	b.Font = Enum.Font.GothamBold
-	b.TextColor3 = COLOR_NEON_BLUE
-	b.TextSize = 14
-	b.Text = text or "Action"
-	b.Parent = parent
-	makeCorner(b, 8)
-	makeStroke(b, COLOR_NEON_PINK, 1)
-	hoverable(b, COLOR_BG_SOFT, COLOR_NEON_PINK, COLOR_NEON_BLUE, COLOR_NEON_YELLOW)
-	return b
+-- // SLIDER
+local function makeSlider(parent, labelText, minVal, maxVal, defaultVal, onChange)
+    local cont = Instance.new("Frame")
+    cont.Name = "Slider_" .. labelText
+    cont.Size = UDim2.new(1, -20, 0, 92)
+    cont.Position = UDim2.new(0, 10, 0, 0)
+    cont.BackgroundColor3 = COLOR_BG_PANEL
+    cont.Parent = parent
+
+    local corner = Instance.new("UICorner", cont)
+    corner.CornerRadius = UDim.new(0, 12)
+
+    local stroke = Instance.new("UIStroke", cont)
+    stroke.Thickness = 2
+    stroke.Color = COLOR_ACENT_BLUE
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 15
+    lbl.TextColor3 = COLOR_TEXT_MAIN
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Size = UDim2.new(1, -16, 0, 24)
+    lbl.Position = UDim2.new(0, 8, 0, 8)
+    lbl.Parent = cont
+
+    local valueLbl = Instance.new("TextLabel")
+    valueLbl.BackgroundTransparency = 1
+    valueLbl.Text = tostring(defaultVal)
+    valueLbl.Font = Enum.Font.GothamBold
+    valueLbl.TextSize = 14
+    valueLbl.TextColor3 = COLOR_ACENT_YELLOW
+    valueLbl.TextXAlignment = Enum.TextXAlignment.Right
+    valueLbl.Size = UDim2.new(1, -16, 0, 24)
+    valueLbl.Position = UDim2.new(0, 8, 0, 8)
+    valueLbl.Parent = cont
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, -16, 0, 12)
+    bar.Position = UDim2.new(0, 8, 0, 44)
+    bar.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+    bar.Parent = cont
+
+    local barCorner = Instance.new("UICorner", bar)
+    barCorner.CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((defaultVal - minVal) / (maxVal - minVal), 0, 1, 0)
+    fill.Position = UDim2.new(0, 0, 0, 0)
+    fill.BackgroundColor3 = COLOR_ACENT_PINK
+    fill.Parent = bar
+
+    local fillCorner = Instance.new("UICorner", fill)
+    fillCorner.CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("ImageButton")
+    knob.BackgroundTransparency = 1
+    knob.Size = UDim2.new(0, 28, 0, 28)
+    knob.AnchorPoint = Vector2.new(0.5, 0.5)
+    knob.Position = UDim2.new(fill.Size.X.Scale, 0, 0.5, 0)
+    knob.Image = "rbxassetid://3570695787" -- round white circle
+    knob.ImageColor3 = COLOR_ACENT_YELLOW
+    knob.Parent = bar
+
+    local dragging = false
+    local currentValue = defaultVal
+
+    local function setFromX(x)
+        local p = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+        fill.Size = UDim2.new(p, 0, 1, 0)
+        knob.Position = UDim2.new(p, 0, 0.5, 0)
+        local v = math.floor(minVal + (maxVal - minVal) * p + 0.5)
+        currentValue = v
+        valueLbl.Text = tostring(v)
+        if onChange then
+            pcall(onChange, v)
+        end
+    end
+
+    knob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+        end
+    end)
+
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            setFromX(input.Position.X)
+            dragging = true
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            setFromX(input.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    local function setValue(v)
+        v = math.clamp(v, minVal, maxVal)
+        local p = (v - minVal) / (maxVal - minVal)
+        fill.Size = UDim2.new(p, 0, 1, 0)
+        knob.Position = UDim2.new(p, 0, 0.5, 0)
+        currentValue = v
+        valueLbl.Text = tostring(v)
+        if onChange then
+            pcall(onChange, v)
+        end
+    end
+
+    return {
+        container = cont,
+        setValue  = setValue,
+        getValue  = function() return currentValue end
+    }
 end
 
-local function makeToggle(parent, labelText, default)
-	local holder = Instance.new("Frame")
-	holder.Size = UDim2.new(1, -20, 0, 44)
-	holder.BackgroundColor3 = COLOR_BG_SOFT
-	holder.BorderSizePixel = 0
-	holder.Parent = parent
-	makeCorner(holder, 8)
-	makeStroke(holder, COLOR_NEON_PINK, 1)
-
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, -100, 1, 0)
-	label.Position = UDim2.new(0, 12, 0, 0)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamSemibold
-	label.TextSize = 14
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Text = labelText or "Toggle"
-	label.TextColor3 = COLOR_TEXT
-	label.Parent = holder
-
-	local t = Instance.new("TextButton")
-	t.Size = UDim2.new(0, 80, 0, 30)
-	t.Position = UDim2.new(1, -92, 0.5, -15)
-	t.BackgroundColor3 = default and Color3.fromRGB(0, 170, 90) or Color3.fromRGB(60, 60, 68)
-	t.AutoButtonColor = false
-	t.Text = default and "ON" or "OFF"
-	t.Font = Enum.Font.GothamBold
-	t.TextSize = 14
-	t.TextColor3 = Color3.fromRGB(245,245,245)
-	t.Parent = holder
-	makeCorner(t, 6)
-
-	hoverable(t, t.BackgroundColor3, COLOR_NEON_PINK, t.TextColor3, COLOR_NEON_YELLOW)
-
-	local state = default or false
-
-	t.MouseButton1Click:Connect(function()
-		state = not state
-		t.Text = state and "ON" or "OFF"
-		tween(t, 0.15, {BackgroundColor3 = state and Color3.fromRGB(0,170,90) or Color3.fromRGB(60,60,68)}):Play()
-	end)
-
-	return {
-		Frame = holder,
-		Button = t,
-		Label = label,
-		Get = function() return state end,
-		Set = function(v)
-			state = not not v
-			t.Text = state and "ON" or "OFF"
-			t.BackgroundColor3 = state and Color3.fromRGB(0,170,90) or Color3.fromRGB(60,60,68)
-		end,
-		Changed = t.MouseButton1Click
-	}
+-- // SCROLL AUTO CANVAS SIZE
+local function bindAutoCanvas(scrollFrame)
+    local list = scrollFrame:FindFirstChildOfClass("UIListLayout")
+    if not list then
+        list = Instance.new("UIListLayout")
+        list.Padding = UDim.new(0, 8)
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Parent = scrollFrame
+    end
+    local function refresh()
+        local content = list.AbsoluteContentSize
+        scrollFrame.CanvasSize = UDim2.new(0, 0, 0, content.Y + 12)
+    end
+    list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refresh)
+    scrollFrame.ChildAdded:Connect(refresh)
+    scrollFrame.ChildRemoved:Connect(refresh)
+    refresh()
 end
 
-local function makeTextBox(parent, labelText, placeholder)
-	local holder = Instance.new("Frame")
-	holder.Size = UDim2.new(1, -20, 0, 56)
-	holder.BackgroundColor3 = COLOR_BG_SOFT
-	holder.BorderSizePixel = 0
-	holder.Parent = parent
-	makeCorner(holder, 8)
-	makeStroke(holder, COLOR_NEON_PINK, 1)
+-- // PLAYER SELECT DROPDOWN (for target tab)
+local function makePlayerPicker(parent)
+    local holder = Instance.new("Frame")
+    holder.Name = "PlayerPicker"
+    holder.Size = UDim2.new(1, -20, 0, 150)
+    holder.Position = UDim2.new(0, 10, 0, 0)
+    holder.BackgroundColor3 = COLOR_BG_PANEL
+    holder.Parent = parent
 
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, -20, 0, 20)
-	label.Position = UDim2.new(0, 12, 0, 6)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamSemibold
-	label.TextSize = 13
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Text = labelText or "Input"
-	label.TextColor3 = COLOR_TEXT
-	label.Parent = holder
+    local corner = Instance.new("UICorner", holder)
+    corner.CornerRadius = UDim.new(0, 12)
 
-	local box = Instance.new("TextBox")
-	box.Size = UDim2.new(1, -24, 0, 24)
-	box.Position = UDim2.new(0, 12, 0, 28)
-	box.BackgroundColor3 = COLOR_BG
-	box.BorderSizePixel = 0
-	box.ClearTextOnFocus = false
-	box.PlaceholderText = placeholder or ""
-	box.Text = ""
-	box.TextColor3 = COLOR_NEON_BLUE
-	box.Font = Enum.Font.Gotham
-	box.TextSize = 14
-	box.Parent = holder
-	makeCorner(box, 6)
-	makeStroke(box, COLOR_NEON_BLUE, 1)
+    local stroke = Instance.new("UIStroke", holder)
+    stroke.Thickness = 2
+    stroke.Color = COLOR_ACENT_BLUE
 
-	return box
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Text = "Target Player"
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 16
+    title.TextColor3 = COLOR_TEXT_MAIN
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Size = UDim2.new(1, -16, 0, 24)
+    title.Position = UDim2.new(0, 8, 0, 8)
+    title.Parent = holder
+
+    local search = Instance.new("TextBox")
+    search.Size = UDim2.new(1, -16, 0, 32)
+    search.Position = UDim2.new(0, 8, 0, 40)
+    search.BackgroundColor3 = COLOR_BTN_IDLE
+    search.TextColor3 = COLOR_TEXT_MAIN
+    search.PlaceholderText = "Search username..."
+    search.Font = Enum.Font.Gotham
+    search.TextSize = 14
+    search.ClearTextOnFocus = false
+    search.Parent = holder
+    local scorner = Instance.new("UICorner", search)
+    scorner.CornerRadius = UDim.new(0, 8)
+
+    local listFrame = Instance.new("ScrollingFrame")
+    listFrame.Size = UDim2.new(1, -16, 1, -82)
+    listFrame.Position = UDim2.new(0, 8, 0, 74)
+    listFrame.BackgroundTransparency = 1
+    listFrame.ScrollBarThickness = 6
+    listFrame.Parent = holder
+    bindAutoCanvas(listFrame)
+
+    local selectedLabel = Instance.new("TextLabel")
+    selectedLabel.BackgroundTransparency = 1
+    selectedLabel.Text = "Selected: (none)"
+    selectedLabel.Font = Enum.Font.Gotham
+    selectedLabel.TextSize = 13
+    selectedLabel.TextColor3 = COLOR_TEXT_DIM
+    selectedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    selectedLabel.Size = UDim2.new(1, -16, 0, 18)
+    selectedLabel.Position = UDim2.new(0, 8, 1, -20)
+    selectedLabel.Parent = holder
+
+    local currentTarget = nil
+
+    local function setTarget(p)
+        currentTarget = p
+        selectedLabel.Text = "Selected: " .. (p and p.Name or "(none)")
+    end
+
+    local function refreshList()
+        listFrame:ClearAllChildren()
+        local query = string.lower(search.Text or "")
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                if query == "" or string.find(string.lower(p.Name), query, 1, true) then
+                    local row = Instance.new("TextButton")
+                    row.Size = UDim2.new(1, 0, 0, 34)
+                    row.BackgroundColor3 = COLOR_BTN_IDLE
+                    row.TextColor3 = COLOR_TEXT_MAIN
+                    row.Text = p.Name
+                    row.Font = Enum.Font.Gotham
+                    row.TextSize = 14
+                    row.Parent = listFrame
+                    local rc = Instance.new("UICorner", row)
+                    rc.CornerRadius = UDim.new(0, 8)
+                    applyHover(row, COLOR_ACENT_BLUE)
+
+                    row.MouseButton1Click:Connect(function()
+                        setTarget(p)
+                        showToast("Target set to " .. p.Name, COLOR_GOOD)
+                    end)
+                end
+            end
+        end
+    end
+
+    search:GetPropertyChangedSignal("Text"):Connect(refreshList)
+    Players.PlayerAdded:Connect(refreshList)
+    Players.PlayerRemoving:Connect(function(p)
+        if currentTarget == p then
+            setTarget(nil)
+        end
+        refreshList()
+    end)
+
+    refreshList()
+
+    return {
+        getTarget = function() return currentTarget end,
+        setTarget = setTarget,
+    }
 end
 
-local function makeDropdown(parent, labelText, getItemsFunc, onSelect)
-	local holder = Instance.new("Frame")
-	holder.Size = UDim2.new(1, -20, 0, 44)
-	holder.BackgroundColor3 = COLOR_BG_SOFT
-	holder.Parent = parent
-	makeCorner(holder, 8)
-	makeStroke(holder, COLOR_NEON_PINK, 1)
+-- // TAB SYSTEM
+local Tabs = {}
 
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, -40, 1, 0)
-	label.Position = UDim2.new(0, 12, 0, 0)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamSemibold
-	label.TextSize = 14
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Text = labelText or "Select"
-	label.TextColor3 = COLOR_TEXT
-	label.Parent = holder
-
-	local arrow = Instance.new("TextButton")
-	arrow.Size = UDim2.new(0, 32, 0, 32)
-	arrow.Position = UDim2.new(1, -36, 0.5, -16)
-	arrow.BackgroundTransparency = 1
-	arrow.Text = "▼"
-	arrow.TextColor3 = COLOR_NEON_BLUE
-	arrow.Font = Enum.Font.GothamBold
-	arrow.TextSize = 16
-	arrow.Parent = holder
-
-	local listFrame = Instance.new("Frame")
-	listFrame.Visible = false
-	listFrame.Size = UDim2.new(1, -20, 0, 160)
-	listFrame.Position = UDim2.new(0, 10, 0, 50)
-	listFrame.BackgroundColor3 = COLOR_BG_SOFT
-	listFrame.Parent = parent
-	makeCorner(listFrame, 8)
-	makeStroke(listFrame, COLOR_NEON_PINK, 1)
-
-	local scroll = Instance.new("ScrollingFrame", listFrame)
-	scroll.Size = UDim2.new(1, 0, 1, 0)
-	scroll.BackgroundTransparency = 1
-	scroll.ScrollBarThickness = 6
-	local layout = Instance.new("UIListLayout", scroll)
-	layout.Padding = UDim.new(0,6)
-
-	local function populate()
-		scroll:ClearAllChildren()
-		layout.Parent = scroll
-		local items = {}
-		local ok, res = pcall(getItemsFunc)
-		if ok and type(res) == "table" then
-			items = res
-		end
-		for _,item in ipairs(items) do
-			local btn = Instance.new("TextButton")
-			btn.Size = UDim2.new(1, -10, 0, 32)
-			btn.BackgroundColor3 = COLOR_BG
-			btn.BorderSizePixel = 0
-			btn.AutoButtonColor = false
-			btn.Font = Enum.Font.Gotham
-			btn.TextColor3 = COLOR_NEON_BLUE
-			btn.TextSize = 14
-			btn.Text = tostring(item.text or item)
-			btn.Parent = scroll
-			makeCorner(btn, 6)
-			makeStroke(btn, COLOR_NEON_BLUE, 1)
-			hoverable(btn, COLOR_BG, COLOR_NEON_PINK, COLOR_NEON_BLUE, COLOR_NEON_YELLOW)
-			btn.MouseButton1Click:Connect(function()
-				label.Text = (labelText or "Select") .. " : " .. tostring(item.text or item)
-				listFrame.Visible = false
-				if onSelect then onSelect(item.value or item) end
-			end)
-		end
-		scroll.CanvasSize = UDim2.new(0,0,0, layout.AbsoluteContentSize.Y + 10)
-	end
-
-	arrow.MouseButton1Click:Connect(function()
-		if listFrame.Visible then
-			listFrame.Visible = false
-		else
-			populate()
-			listFrame.Visible = true
-		end
-	end)
-
-	return {
-		SetText = function(t) label.Text = t end,
-		Close = function() listFrame.Visible = false end,
-		Open = function() populate(); listFrame.Visible = true end
-	}
+local function switchTab(tabName)
+    if CurrentTab and Tabs[CurrentTab] then
+        Tabs[CurrentTab].content.Visible = false
+        Tabs[CurrentTab].button.BackgroundColor3 = COLOR_BTN_IDLE
+        Tabs[CurrentTab].button.TextColor3 = COLOR_ACENT_BLUE
+    end
+    CurrentTab = tabName
+    if Tabs[CurrentTab] then
+        Tabs[CurrentTab].content.Visible = true
+        Tabs[CurrentTab].button.BackgroundColor3 = COLOR_BTN_HOVER
+        Tabs[CurrentTab].button.TextColor3 = COLOR_ACENT_YELLOW
+    end
 end
 
-local function makeSection(parent, titleText)
-	local holder = Instance.new("Frame")
-	holder.Size = UDim2.new(1, 0, 0, 46)
-	holder.BackgroundColor3 = COLOR_BG
-	holder.Parent = parent
-	makeCorner(holder, 10)
-	makeStroke(holder, COLOR_NEON_BLUE, 1)
+local function createTab(name, displayText, order)
+    local btn = Instance.new("TextButton")
+    btn.Name = "Tab_" .. name
+    btn.Size = UDim2.new(1, -8, 0, 42)
+    btn.Position = UDim2.new(0, 4, 0, 0)
+    btn.BackgroundColor3 = COLOR_BTN_IDLE
+    btn.TextColor3 = COLOR_ACENT_BLUE
+    btn.Text = displayText
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 14
+    btn.AutoButtonColor = false
+    btn.Parent = Sidebar
 
-	local header = Instance.new("TextButton")
-	header.Size = UDim2.new(1, -12, 0, 42)
-	header.Position = UDim2.new(0, 6, 0, 2)
-	header.BackgroundColor3 = COLOR_BG_SOFT
-	header.AutoButtonColor = false
-	header.Font = Enum.Font.GothamBold
-	header.TextSize = 14
-	header.TextColor3 = COLOR_NEON_BLUE
-	header.TextXAlignment = Enum.TextXAlignment.Left
-	header.Text = "  " .. (titleText or "Section") .. "   ▲"
-	header.Parent = holder
-	makeCorner(header, 8)
-	makeStroke(header, COLOR_NEON_PINK, 1)
-	hoverable(header, COLOR_BG_SOFT, COLOR_NEON_PINK, COLOR_NEON_BLUE, COLOR_NEON_YELLOW)
+    local bcorner = Instance.new("UICorner", btn)
+    bcorner.CornerRadius = UDim.new(0, 10)
 
-	local body = Instance.new("Frame")
-	body.Size = UDim2.new(1, -12, 0, 0)
-	body.Position = UDim2.new(0, 6, 0, 46)
-	body.BackgroundColor3 = COLOR_BG_SOFT
-	body.Parent = holder
-	makeCorner(body, 8)
-	makeStroke(body, COLOR_NEON_PINK, 1)
+    applyHover(btn, COLOR_ACENT_PINK)
 
-	local list = Instance.new("UIListLayout", body)
-	list.Padding = UDim.new(0, 8)
+    btn.LayoutOrder = order or 0
 
-	local expanded = false
-	local function setExpanded(v)
-		expanded = v
-		header.Text = "  " .. (titleText or "Section") .. (expanded and "   ▲" or "   ▼")
-		local wanted = expanded and (list.AbsoluteContentSize.Y + 16) or 0
-		tween(body, 0.2, {Size = UDim2.new(1, -12, 0, wanted)}):Play()
-		tween(holder, 0.2, {Size = UDim2.new(1, 0, 0, 46 + wanted + 6)}):Play()
-	end
+    local content = Instance.new("ScrollingFrame")
+    content.Name = "Content_" .. name
+    content.Size = UDim2.new(1, - (Sidebar.AbsoluteSize.X + 16), 1, -60)
+    content.Position = UDim2.new(0, Sidebar.AbsoluteSize.X + 12, 0, 52)
+    content.BackgroundTransparency = 1
+    content.ScrollBarThickness = 6
+    content.Visible = false
+    content.Parent = MainFrame
 
-	header.MouseButton1Click:Connect(function()
-		setExpanded(not expanded)
-	end)
+    -- responsive to sidebar width changes
+    Sidebar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        content.Size = UDim2.new(1, - (Sidebar.AbsoluteSize.X + 16), 1, -60)
+        content.Position = UDim2.new(0, Sidebar.AbsoluteSize.X + 12, 0, 52)
+    end)
 
-	-- Expand by default
-	task.defer(function()
-		setExpanded(true)
-	end)
+    bindAutoCanvas(content)
 
-	return {
-		Container = body,
-		UpdateHeight = function()
-			local wanted = expanded and (list.AbsoluteContentSize.Y + 16) or 0
-			body.Size = UDim2.new(1, -12, 0, wanted)
-			holder.Size = UDim2.new(1, 0, 0, 46 + wanted + 6)
-		end
-	}
+    Tabs[name] = {
+        button  = btn,
+        content = content
+    }
+
+    btn.MouseButton1Click:Connect(function()
+        switchTab(name)
+    end)
+
+    return content
 end
 
-local function createTab(name, sideBar, contentHolder)
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, -12, 0, 40)
-	btn.Position = UDim2.new(0, 6, 0, 0)
-	btn.BackgroundColor3 = COLOR_BG_SOFT
-	btn.Text = "  " .. name
-	btn.TextColor3 = COLOR_NEON_BLUE
-	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 14
-	btn.AutoButtonColor = false
-	btn.Parent = sideBar
-	makeCorner(btn, 8)
-	makeStroke(btn, COLOR_NEON_PINK, 1)
-	hoverable(btn, COLOR_BG_SOFT, COLOR_NEON_PINK, COLOR_NEON_BLUE, COLOR_NEON_YELLOW)
+-- // DRAG (TITLE BAR)
+local function enableDrag(dragHandle, dragTarget)
+    local dragging = false
+    local dragStart, startPos
 
-	local page = Instance.new("ScrollingFrame")
-	page.Size = UDim2.new(1, 0, 1, 0)
-	page.BackgroundTransparency = 1
-	page.ScrollBarThickness = 6
-	page.Visible = false
-	page.Parent = contentHolder
+    local function update(input)
+        local delta = input.Position - dragStart
+        dragTarget.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
 
-	local layout = Instance.new("UIListLayout", page)
-	layout.Padding = UDim.new(0, 10)
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = dragTarget.Position
 
-	btn.MouseButton1Click:Connect(function()
-		for tabName, data in pairs(Tabs) do
-			data.Page.Visible = false
-			tween(data.Button, 0.12, {BackgroundColor3 = COLOR_BG_SOFT, TextColor3 = COLOR_NEON_BLUE}):Play()
-		end
-		page.Visible = true
-		tween(btn, 0.12, {BackgroundColor3 = COLOR_NEON_PINK, TextColor3 = COLOR_NEON_YELLOW}):Play()
-		ActiveTab = name
-	end)
+            local conn
+            conn = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    if conn then conn:Disconnect() end
+                end
+            end)
+        end
+    end)
 
-	Tabs[name] = {Button = btn, Page = page}
-	return page
+    dragHandle.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            update(input)
+        end
+    end)
 end
 
---// HUB CONSTRUCTION
-local function buildHub()
-	if HubGui then HubGui:Destroy() end
-
-	HubGui = Instance.new("ScreenGui")
-	HubGui.Name = "SX_AdminHub"
-	HubGui.ResetOnSpawn = false
-	HubGui.Parent = PlayerGui
-
-	-- Floating loader button (always visible)
-	local loader = Instance.new("TextButton")
-	loader.Name = "SX_Loader"
-	loader.Size = UDim2.new(0, 160, 0, 42)
-	loader.Position = UDim2.new(0.5, 0, 0, 8)
-	loader.AnchorPoint = Vector2.new(0.5, 0)
-	loader.BackgroundColor3 = COLOR_NEON_PINK
-	loader.Text = "SX Admin Hub"
-	loader.TextColor3 = COLOR_NEON_YELLOW
-	loader.Font = Enum.Font.GothamBold
-	loader.TextSize = 16
-	loader.AutoButtonColor = false
-	loader.Parent = HubGui
-	makeCorner(loader, 12)
-	makeStroke(loader, COLOR_NEON_BLUE, 2)
-	hoverable(loader, COLOR_NEON_PINK, COLOR_NEON_BLUE, COLOR_NEON_YELLOW, Color3.fromRGB(0,0,0))
-
-	-- Main window
-	local main = Instance.new("Frame")
-	main.Name = "Main"
-	main.Size = UDim2.new(0, 760, 0, 520)
-	main.Position = UDim2.new(0.5, 0, 0.5, 0)
-	main.AnchorPoint = Vector2.new(0.5, 0.5)
-	main.BackgroundColor3 = COLOR_BG
-	main.Active = true
-	main.Visible = false
-	main.Parent = HubGui
-	makeCorner(main, 12)
-	makeStroke(main, COLOR_NEON_BLUE, 2)
-
-	-- Title bar
-	local titleBar = Instance.new("Frame", main)
-	titleBar.Size = UDim2.new(1, 0, 0, 44)
-	titleBar.BackgroundColor3 = COLOR_BG_SOFT
-	makeCorner(titleBar, 10)
-	makeStroke(titleBar, COLOR_NEON_PINK, 1)
-
-	local title = Instance.new("TextLabel", titleBar)
-	title.BackgroundTransparency = 1
-	title.Position = UDim2.new(0, 12, 0, 0)
-	title.Size = UDim2.new(1, -160, 1, 0)
-	title.Font = Enum.Font.GothamBold
-	title.TextSize = 18
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Text = "⚡ SX Cyberpunk Admin Hub"
-	title.TextColor3 = COLOR_TEXT
-
-	local closeBtn = Instance.new("TextButton", titleBar)
-	closeBtn.Size = UDim2.new(0, 40, 0, 32)
-	closeBtn.Position = UDim2.new(1, -48, 0.5, -16)
-	closeBtn.Text = "✕"
-	closeBtn.Font = Enum.Font.GothamBold
-	closeBtn.TextSize = 18
-	closeBtn.BackgroundColor3 = COLOR_BG
-	closeBtn.TextColor3 = COLOR_NEON_PINK
-	closeBtn.AutoButtonColor = false
-	makeCorner(closeBtn, 8)
-	makeStroke(closeBtn, COLOR_NEON_PINK, 1)
-	hoverable(closeBtn, COLOR_BG, COLOR_NEON_PINK, COLOR_NEON_PINK, COLOR_NEON_YELLOW)
-
-	-- Dragging (touch + mouse)
-	do
-		local dragStart, startPos
-		titleBar.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				Dragging = true
-				dragStart = input.Position
-				startPos = main.Position
-			end
-		end)
-		titleBar.InputChanged:Connect(function(input)
-			if Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-				local delta = input.Position - dragStart
-				main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-			end
-		end)
-		UIS.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				Dragging = false
-			end
-		end)
-	end
-
-	loader.MouseButton1Click:Connect(function()
-		main.Visible = not main.Visible
-	end)
-	closeBtn.MouseButton1Click:Connect(function()
-		main.Visible = false
-	end)
-
-	-- Layout
-	local side = Instance.new("Frame", main)
-	side.Size = UDim2.new(0, 180, 1, -56)
-	side.Position = UDim2.new(0, 10, 0, 50)
-	side.BackgroundColor3 = COLOR_BG_SOFT
-	makeCorner(side, 10)
-	makeStroke(side, COLOR_NEON_PINK, 1)
-
-	local sideList = Instance.new("UIListLayout", side)
-	sideList.Padding = UDim.new(0, 6)
-
-	local content = Instance.new("Frame", main)
-	content.Size = UDim2.new(1, -210, 1, -56)
-	content.Position = UDim2.new(0, 200, 0, 50)
-	content.BackgroundTransparency = 1
-
-	-- TABS
-	local tabMovement = createTab("Movement", side, content)
-	local tabCombat   = createTab("Combat",   side, content)
-	local tabFun      = createTab("Fun",      side, content)
-	local tabVisual   = createTab("Visual",   side, content)
-	local tabServer   = createTab("Server",   side, content)
-	local tabTarget   = createTab("Target",   side, content)
-	local tabSettings = createTab("Settings", side, content)
-
-	-- open first tab
-	Tabs["Movement"].Button:Activate()
-	Tabs["Movement"].Button.MouseButton1Click:Fire()
-
-	-- MOVEMENT SECTIONS
-	do
-		local sMove = makeSection(tabMovement, "Movement Controls")
-		local c = sMove.Container
-		local btn
-
-		btn = makeButton(c, "Super Speed (100)")
-		btn.MouseButton1Click:Connect(function()
-			local H = safeHumanoid()
-			H.WalkSpeed = (H.WalkSpeed == 16) and 100 or 16
-			announce("WalkSpeed: "..tostring(H.WalkSpeed))
-		end)
-
-		btn = makeButton(c, "Super Jump (200)")
-		btn.MouseButton1Click:Connect(function()
-			local H = safeHumanoid()
-			H.JumpPower = (H.JumpPower == 50) and 200 or 50
-			announce("JumpPower: "..tostring(H.JumpPower))
-		end)
-
-		local tgFly = makeToggle(c, "Fly (Space Up / Ctrl Down)", false)
-		tgFly.Changed:Connect(function()
-			local enabled = tgFly.Get()
-			if enabled then
-				if FlyConn then FlyConn:Disconnect() end
-				FlyConn = RS.Heartbeat:Connect(function()
-					local rp = rootPart()
-					if not rp then return end
-					local v = Vector3.zero
-					if UIS:IsKeyDown(Enum.KeyCode.Space) then v = v + Vector3.new(0, 55, 0) end
-					if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.ButtonL2) then v = v + Vector3.new(0, -55, 0) end
-					if UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.Thumbstick1) then v = v + (rp.CFrame.LookVector * 55) end
-					if UIS:IsKeyDown(Enum.KeyCode.S) then v = v - (rp.CFrame.LookVector * 55) end
-					if UIS:IsKeyDown(Enum.KeyCode.A) then v = v - (rp.CFrame.RightVector * 55) end
-					if UIS:IsKeyDown(Enum.KeyCode.D) then v = v + (rp.CFrame.RightVector * 55) end
-					rp.Velocity = v
-				end)
-			else
-				if FlyConn then FlyConn:Disconnect(); FlyConn = nil end
-			end
-		end)
-
-		local tgNoclip = makeToggle(c, "Noclip", false)
-		tgNoclip.Changed:Connect(function()
-			local enabled = tgNoclip.Get()
-			if enabled then
-				if NoclipConn then NoclipConn:Disconnect() end
-				NoclipConn = RS.Stepped:Connect(function()
-					if not Character then return end
-					for _,p in ipairs(Character:GetDescendants()) do
-						if p:IsA("BasePart") then p.CanCollide = false end
-					end
-				end)
-			else
-				if NoclipConn then NoclipConn:Disconnect(); NoclipConn = nil end
-			end
-		end)
-
-		local tgInf = makeToggle(c, "Infinite Jump", false)
-		tgInf.Changed:Connect(function()
-			local enabled = tgInf.Get()
-			if enabled then
-				if InfJumpConn then InfJumpConn:Disconnect() end
-				InfJumpConn = UIS.JumpRequest:Connect(function()
-					local H = safeHumanoid()
-					H:ChangeState(Enum.HumanoidStateType.Jumping)
-				end)
-			else
-				if InfJumpConn then InfJumpConn:Disconnect(); InfJumpConn = nil end
-			end
-		end)
-
-		btn = makeButton(c, "Blink Forward 12")
-		btn.MouseButton1Click:Connect(function()
-			local rp = rootPart()
-			if rp then rp.CFrame = rp.CFrame + rp.CFrame.LookVector * 12 end
-		end)
-
-		btn = makeButton(c, "Teleport Up +50")
-		btn.MouseButton1Click:Connect(function()
-			local rp = rootPart()
-			if rp then rp.CFrame = rp.CFrame + Vector3.new(0,50,0) end
-		end)
-
-		local sPhysics = makeSection(tabMovement, "Physics Tweaks")
-		local pc = sPhysics.Container
-
-		local tgGravity = makeToggle(pc, "Low Gravity (0.5x)", false)
-		local lastG = workspace.Gravity
-		tgGravity.Changed:Connect(function()
-			if tgGravity.Get() then
-				lastG = workspace.Gravity
-				workspace.Gravity = lastG * 0.5
-			else
-				workspace.Gravity = lastG
-			end
-		end)
-
-		local btnReset = makeButton(pc, "Reset Movement")
-		btnReset.MouseButton1Click:Connect(function()
-			local H = safeHumanoid()
-			H.WalkSpeed = 16
-			H.JumpPower = 50
-			if FlyConn then FlyConn:Disconnect(); FlyConn=nil end
-			if NoclipConn then NoclipConn:Disconnect(); NoclipConn=nil end
-			if InfJumpConn then InfJumpConn:Disconnect(); InfJumpConn=nil end
-			for _,p in ipairs(Character:GetDescendants()) do
-				if p:IsA("BasePart") then p.CanCollide = true end
-			end
-			tgFly.Set(false); tgNoclip.Set(false); tgInf.Set(false); tgGravity.Set(false)
-		end)
-	end
-
-	-- COMBAT SECTIONS
-	do
-		local sSelf = makeSection(tabCombat, "Self Combat Tools")
-		local c = sSelf.Container
-
-		local btn = makeButton(c, "God Mode (client)")
-		btn.MouseButton1Click:Connect(function()
-			local H = safeHumanoid()
-			H.MaxHealth = math.huge
-			H.Health = math.huge
-			announce("God mode (client) applied")
-		end)
-
-		btn = makeButton(c, "Kill Self")
-		btn.MouseButton1Click:Connect(function()
-			local H = safeHumanoid()
-			H.Health = 0
-		end)
-
-		btn = makeButton(c, "Ragdoll (Physics)")
-		btn.MouseButton1Click:Connect(function()
-			local H = safeHumanoid()
-			H:ChangeState(Enum.HumanoidStateType.Physics)
-			task.delay(1.2, function() if H then H:ChangeState(Enum.HumanoidStateType.GettingUp) end end)
-		end)
-
-		btn = makeButton(c, "Spin 360")
-		btn.MouseButton1Click:Connect(function()
-			local rp = rootPart()
-			if rp then
-				rp.CFrame = rp.CFrame * CFrame.Angles(0, math.rad(360), 0)
-			end
-		end)
-
-		local sTarget = makeSection(tabCombat, "Targeted (Client-Side)")
-		local tc = sTarget.Container
-
-		local dd = makeDropdown(tc, "Select Player", function()
-			local list = {}
-			for _,pl in ipairs(Players:GetPlayers()) do
-				if pl ~= LocalPlayer then
-					table.insert(list, {text = pl.DisplayName .. " (@"..pl.Name..")", value = pl})
-				end
-			end
-			return list
-		end, function(plr)
-			CurrentTarget = plr
-		end)
-
-		local btnTo = makeButton(tc, "Teleport To Target")
-		btnTo.MouseButton1Click:Connect(function()
-			if CurrentTarget and CurrentTarget.Character and CurrentTarget.Character.PrimaryPart then
-				local rp = rootPart()
-				if rp then
-					rp.CFrame = CurrentTarget.Character.PrimaryPart.CFrame + Vector3.new(2,0,2)
-				end
-			else
-				announce("Select a target first.")
-			end
-		end)
-
-		local btnFollow = makeButton(tc, "Follow Target (toggle)")
-		local followConn = nil
-		btnFollow.MouseButton1Click:Connect(function()
-			if followConn then followConn:Disconnect(); followConn=nil; announce("Follow: OFF"); return end
-			if not CurrentTarget then announce("Select a target first."); return end
-			announce("Follow: ON")
-			followConn = RS.Heartbeat:Connect(function()
-				if not CurrentTarget or not CurrentTarget.Character or not CurrentTarget.Character.PrimaryPart then return end
-				local rp = rootPart(); if not rp then return end
-				local pos = CurrentTarget.Character.PrimaryPart.Position + (CurrentTarget.Character.PrimaryPart.CFrame.LookVector * -2)
-				rp.CFrame = CFrame.new(pos, CurrentTarget.Character.PrimaryPart.Position)
-			end)
-		end)
-
-		local btnSpectate = makeButton(tc, "Spectate Target (toggle)")
-		local spectate = false
-		btnSpectate.MouseButton1Click:Connect(function()
-			if not CurrentTarget or not CurrentTarget.Character then announce("Select a target first."); return end
-			spectate = not spectate
-			if spectate then
-				workspace.CurrentCamera.CameraSubject = CurrentTarget.Character:FindFirstChildOfClass("Humanoid") or CurrentTarget.Character
-				announce("Spectating @"..CurrentTarget.Name)
-			else
-				workspace.CurrentCamera.CameraSubject = Humanoid
-				announce("Spectate OFF")
-			end
-		end)
-
-		local btnAnnoy = makeButton(tc, "Annoy Target: Orbit (client)")
-		btnAnnoy.MouseButton1Click:Connect(function()
-			if not CurrentTarget or not CurrentTarget.Character or not CurrentTarget.Character.PrimaryPart then announce("Select a target first."); return end
-			local rp = rootPart(); if not rp then return end
-			for i=1,100 do
-				if not CurrentTarget.Character or not CurrentTarget.Character.PrimaryPart then break end
-				local tpos = CurrentTarget.Character.PrimaryPart.Position
-				local angle = math.rad(i*12)
-				local offset = Vector3.new(math.cos(angle)*4, 2, math.sin(angle)*4)
-				rp.CFrame = CFrame.new(tpos + offset, tpos)
-				RS.Heartbeat:Wait()
-			end
-		end)
-	end
-
-	-- FUN
-	do
-		local sAnim = makeSection(tabFun, "Emotes & Fun")
-		local c = sAnim.Container
-
-		local function playAnim(id)
-			local H = safeHumanoid()
-			local anim = Instance.new("Animation")
-			anim.AnimationId = "rbxassetid://"..tostring(id)
-			local track = (H:FindFirstChildOfClass("Animator") or Instance.new("Animator", H)):LoadAnimation(anim)
-			track:Play()
-			task.delay(8, function() pcall(function() track:Stop() end) end)
-		end
-
-		local b = makeButton(c, "Dance")
-		b.MouseButton1Click:Connect(function() playAnim(507771019) end)
-		b = makeButton(c, "Wave")
-		b.MouseButton1Click:Connect(function() playAnim(507770239) end)
-		b = makeButton(c, "Hero Pose")
-		b.MouseButton1Click:Connect(function() playAnim(616161997) end)
-
-		local sMisc = makeSection(tabFun, "Misc")
-		local m = sMisc.Container
-
-		local tgSit = makeToggle(m, "Sit / Unsit", false)
-		tgSit.Changed:Connect(function()
-			local H = safeHumanoid()
-			H.Sit = tgSit.Get()
-		end)
-
-		local b2 = makeButton(m, "Launch Upward")
-		b2.MouseButton1Click:Connect(function()
-			local rp = rootPart()
-			if rp then rp.Velocity = Vector3.new(0, 200, 0) end
-		end)
-
-		local b3 = makeButton(m, "Spin Fast (1 sec)")
-		b3.MouseButton1Click:Connect(function()
-			local rp = rootPart()
-			if not rp then return end
-			for i=1,20 do
-				rp.CFrame = rp.CFrame * CFrame.Angles(0, math.rad(18), 0)
-				task.wait(0.05)
-			end
-		end)
-	end
-
-	-- VISUAL
-	do
-		local sWorld = makeSection(tabVisual, "World")
-		local c = sWorld.Container
-
-		local tgNight = makeToggle(c, "Night Vision", false)
-		local prevBrightness, prevAmbient = Lighting.Brightness, Lighting.Ambient
-		tgNight.Changed:Connect(function()
-			if tgNight.Get() then
-				prevBrightness, prevAmbient = Lighting.Brightness, Lighting.Ambient
-				Lighting.Brightness = 4
-				Lighting.Ambient   = Color3.fromRGB(0, 255, 200)
-			else
-				Lighting.Brightness = prevBrightness
-				Lighting.Ambient   = prevAmbient
-			end
-		end)
-
-		local tgOutline = makeToggle(c, "Neon Character Material", false)
-		tgOutline.Changed:Connect(function()
-			if not Character then return end
-			for _,p in ipairs(Character:GetDescendants()) do
-				if p:IsA("BasePart") then
-					p.Material = tgOutline.Get() and Enum.Material.Neon or Enum.Material.SmoothPlastic
-				end
-			end
-		end)
-
-		local sESP = makeSection(tabVisual, "Player ESP (Billboard)")
-		local e = sESP.Container
-
-		local tgESP = makeToggle(e, "Toggle ESP (names)", false)
-		local function buildESP()
-			if ESPFolder then ESPFolder:Destroy() end
-			ESPFolder = Instance.new("Folder", HubGui)
-			ESPFolder.Name = "SX_ESP"
-			for _,pl in ipairs(Players:GetPlayers()) do
-				if pl ~= LocalPlayer and pl.Character and pl.Character:FindFirstChild("Head") then
-					local bb = Instance.new("BillboardGui", ESPFolder)
-					bb.AlwaysOnTop = true
-					bb.StudsOffset = Vector3.new(0, 2.5, 0)
-					bb.Size = UDim2.new(0, 200, 0, 32)
-					bb.Adornee = pl.Character.Head
-
-					local t = Instance.new("TextLabel", bb)
-					t.Size = UDim2.new(1,0,1,0)
-					t.BackgroundTransparency = 1
-					t.Font = Enum.Font.GothamBold
-					t.TextSize = 14
-					t.Text = pl.DisplayName .. " (@"..pl.Name..")"
-					t.TextColor3 = COLOR_NEON_PINK
-					makeStroke(t, COLOR_NEON_BLUE, 1)
-				end
-			end
-		end
-		tgESP.Changed:Connect(function()
-			if tgESP.Get() then buildESP() else if ESPFolder then ESPFolder:Destroy(); ESPFolder=nil end end
-		end)
-	end
-
-	-- SERVER
-	do
-		local sServer = makeSection(tabServer, "Server & Session")
-		local c = sServer.Container
-
-		local b = makeButton(c, "Rejoin")
-		b.MouseButton1Click:Connect(function()
-			TeleportService:Teleport(game.PlaceId, LocalPlayer)
-		end)
-
-		b = makeButton(c, "Server Hop (soft)")
-		b.MouseButton1Click:Connect(function()
-			TeleportService:Teleport(game.PlaceId, LocalPlayer)
-		end)
-
-		b = makeButton(c, "Copy JobId")
-		b.MouseButton1Click:Connect(function()
-			if setclipboard then setclipboard(game.JobId) end
-			announce("JobId copied (if permitted)")
-		end)
-
-		local sClient = makeSection(tabServer, "Client Utils")
-		local d = sClient.Container
-
-		local b2 = makeButton(d, "Reset Character")
-		b2.MouseButton1Click:Connect(function()
-			local H = safeHumanoid()
-			H.Health = 0
-		end)
-
-		local b3 = makeButton(d, "Clear Connections (Fly/Noclip/InfJump)")
-		b3.MouseButton1Click:Connect(function()
-			if FlyConn then FlyConn:Disconnect(); FlyConn=nil end
-			if NoclipConn then NoclipConn:Disconnect(); NoclipConn=nil end
-			if InfJumpConn then InfJumpConn:Disconnect(); InfJumpConn=nil end
-			announce("Cleared loop connections.")
-		end)
-	end
-
-	-- TARGET
-	do
-		local sSelect = makeSection(tabTarget, "Target Selector")
-		local c = sSelect.Container
-
-		local search = makeTextBox(c, "Search Player (@name or display)", "type to filter…")
-		local dd = makeDropdown(c, "Choose Player", function()
-			local q = string.lower(search.Text)
-			local list = {}
-			for _,pl in ipairs(Players:GetPlayers()) do
-				if pl ~= LocalPlayer then
-					local label = pl.DisplayName .. " (@"..pl.Name..")"
-					if q == "" or string.find(string.lower(label), q, 1, true) then
-						table.insert(list, {text = label, value = pl})
-					end
-				end
-			end
-			return list
-		end, function(pl) CurrentTarget = pl end)
-
-		search:GetPropertyChangedSignal("Text"):Connect(function()
-			dd.Open() -- repopulate
-		end)
-
-		local sActs = makeSection(tabTarget, "Target Actions (client)")
-		local a = sActs.Container
-
-		local b = makeButton(a, "Teleport To")
-		b.MouseButton1Click:Connect(function()
-			if not CurrentTarget or not CurrentTarget.Character or not CurrentTarget.Character.PrimaryPart then announce("Pick a target."); return end
-			local rp = rootPart(); if not rp then return end
-			rp.CFrame = CurrentTarget.Character.PrimaryPart.CFrame + Vector3.new(2,0,2)
-		end)
-
-		local b2 = makeButton(a, "Bring To Me (move self near)")
-		b2.MouseButton1Click:Connect(function()
-			if not CurrentTarget or not CurrentTarget.Character or not CurrentTarget.Character.PrimaryPart then announce("Pick a target."); return end
-			local rp = rootPart(); if not rp then return end
-			CurrentTarget = CurrentTarget
-			rp.CFrame = rp.CFrame + Vector3.new(0,0,0) -- noop to ensure rp
-			-- client-safe "bring": we just TP ourselves in front and stare
-			rp.CFrame = CFrame.new(rp.Position, CurrentTarget.Character.PrimaryPart.Position)
-		end)
-
-		local b3 = makeButton(a, "Fling Self Into Target")
-		b3.MouseButton1Click:Connect(function()
-			if not CurrentTarget or not CurrentTarget.Character or not CurrentTarget.Character.PrimaryPart then announce("Pick a target."); return end
-			local rp = rootPart(); if not rp then return end
-			local dir = (CurrentTarget.Character.PrimaryPart.Position - rp.Position).Unit
-			rp.Velocity = dir * 200 + Vector3.new(0,50,0)
-		end)
-
-		local followConn
-		local b4 = makeButton(a, "Follow Target (toggle)")
-		b4.MouseButton1Click:Connect(function()
-			if followConn then followConn:Disconnect(); followConn=nil; announce("Follow: OFF"); return end
-			if not CurrentTarget then announce("Pick a target."); return end
-			announce("Follow: ON")
-			followConn = RS.Heartbeat:Connect(function()
-				if not CurrentTarget or not CurrentTarget.Character or not CurrentTarget.Character.PrimaryPart then return end
-				local rp = rootPart(); if not rp then return end
-				local pos = CurrentTarget.Character.PrimaryPart.Position + (CurrentTarget.Character.PrimaryPart.CFrame.LookVector * -3)
-				rp.CFrame = CFrame.new(pos, CurrentTarget.Character.PrimaryPart.Position)
-			end)
-		end)
-	end
-
-	-- SETTINGS
-	do
-		local sUI = makeSection(tabSettings, "Interface")
-		local c = sUI.Container
-
-		local tgHints = makeToggle(c, "Notifications", true)
-		tgHints.Changed:Connect(function()
-			if tgHints.Get() then announce("Notifications ON") else announce("Notifications OFF") end
-		end)
-
-		local b = makeButton(c, "Unload Hub")
-		b.MouseButton1Click:Connect(function()
-			clearConnections(Connections)
-			if FlyConn then FlyConn:Disconnect() end
-			if NoclipConn then NoclipConn:Disconnect() end
-			if InfJumpConn then InfJumpConn:Disconnect() end
-			if HubGui then HubGui:Destroy() end
-		end)
-
-		local sKey = makeSection(tabSettings, "Keybinds")
-		local kc = sKey.Container
-		local info = Instance.new("TextLabel", kc)
-		info.BackgroundTransparency = 1
-		info.Size = UDim2.new(1, -20, 0, 40)
-		info.Position = UDim2.new(0, 10, 0, 0)
-		info.Font = Enum.Font.Gotham
-		info.TextSize = 14
-		info.TextColor3 = COLOR_TEXT
-		info.TextXAlignment = Enum.TextXAlignment.Left
-		info.TextWrapped = true
-		info.Text = "RightCtrl: Toggle Hub • Esc: Roblox menu\nButton works on mobile."
-	end
+-- // BUILD PANEL
+local function buildPanel()
+    if PanelGui then
+        PanelGui:Destroy()
+        PanelGui = nil
+    end
+
+    PanelGui = Instance.new("ScreenGui")
+    PanelGui.Name = "SX_CyberpunkAdmin"
+    PanelGui.ResetOnSpawn = false
+    PanelGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    PanelGui.IgnoreGuiInset = true
+    PanelGui.Parent = PlayerGui
+
+    -- Main container
+    MainFrame = Instance.new("Frame")
+    MainFrame.Name = "Main"
+    MainFrame.Size = UDim2.fromOffset(MOBILE_SAFE_WIDTH, MOBILE_SAFE_HEIGHT)
+    MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    MainFrame.Position = UDim2.new(0.5, 0, 0.52, 0)
+    MainFrame.BackgroundColor3 = COLOR_BG_DARK
+    MainFrame.Parent = PanelGui
+
+    local mCorner = Instance.new("UICorner", MainFrame)
+    mCorner.CornerRadius = UDim.new(0, 16)
+
+    local mStroke = Instance.new("UIStroke", MainFrame)
+    mStroke.Thickness = 3
+    mStroke.Color = COLOR_ACENT_BLUE
+
+    -- drop shadow-ish
+    local shadow = Instance.new("ImageLabel")
+    shadow.BackgroundTransparency = 1
+    shadow.Image = "rbxassetid://5028857084"
+    shadow.ImageTransparency = 0.2
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(24, 24, 276, 276)
+    shadow.Size = UDim2.new(1, 40, 1, 40)
+    shadow.Position = UDim2.fromOffset(-20, -20)
+    shadow.ZIndex = 0
+    shadow.Parent = MainFrame
+
+    -- Title bar
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Name = "TitleBar"
+    TitleBar.Size = UDim2.new(1, -12, 0, 44)
+    TitleBar.Position = UDim2.new(0, 6, 0, 6)
+    TitleBar.BackgroundColor3 = COLOR_BG_PANEL
+    TitleBar.Parent = MainFrame
+    local tCorner = Instance.new("UICorner", TitleBar)
+    tCorner.CornerRadius = UDim.new(0, 12)
+    local tStroke = Instance.new("UIStroke", TitleBar)
+    tStroke.Thickness = 2
+    tStroke.Color = COLOR_ACENT_PINK
+
+    local Title = Instance.new("TextLabel")
+    Title.BackgroundTransparency = 1
+    Title.Text = "⚡ SX Cyberpunk Admin ⚡"
+    Title.Font = Enum.Font.GothamBold
+    Title.TextSize = 18
+    Title.TextColor3 = COLOR_TEXT_MAIN
+    Title.TextXAlignment = Enum.TextXAlignment.Center
+    Title.Size = UDim2.new(1, -136, 1, 0)
+    Title.Position = UDim2.new(0, 68, 0, 0)
+    Title.Parent = TitleBar
+
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Size = UDim2.new(0, 88, 0, 32)
+    CloseBtn.Position = UDim2.new(1, -96, 0.5, -16)
+    CloseBtn.BackgroundColor3 = COLOR_BTN_IDLE
+    CloseBtn.Text = "HIDE"
+    CloseBtn.TextColor3 = COLOR_TEXT_MAIN
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.TextSize = 14
+    CloseBtn.AutoButtonColor = false
+    CloseBtn.Parent = TitleBar
+    local cCorner = Instance.new("UICorner", CloseBtn)
+    cCorner.CornerRadius = UDim.new(0, 10)
+    applyHover(CloseBtn, COLOR_BAD)
+
+    local Logo = Instance.new("TextLabel")
+    Logo.BackgroundTransparency = 1
+    Logo.Text = "SX"
+    Logo.Font = Enum.Font.GothamBlack
+    Logo.TextColor3 = COLOR_ACENT_YELLOW
+    Logo.TextSize = 20
+    Logo.Size = UDim2.new(0, 60, 1, 0)
+    Logo.Position = UDim2.new(0, 8, 0, 0)
+    Logo.Parent = TitleBar
+
+    -- Sidebar
+    Sidebar = Instance.new("Frame")
+    Sidebar.Name = "Sidebar"
+    Sidebar.Size = UDim2.new(0, 168, 1, -64)
+    Sidebar.Position = UDim2.new(0, 6, 0, 56)
+    Sidebar.BackgroundColor3 = COLOR_BG_PANEL
+    Sidebar.Parent = MainFrame
+    local sCorner = Instance.new("UICorner", Sidebar)
+    sCorner.CornerRadius = UDim.new(0, 14)
+    local sStroke = Instance.new("UIStroke", Sidebar)
+    sStroke.Thickness = 2
+    sStroke.Color = COLOR_ACENT_BLUE
+
+    local tabList = Instance.new("UIListLayout", Sidebar)
+    tabList.Padding = UDim.new(0, 8)
+    tabList.SortOrder = Enum.SortOrder.LayoutOrder
+
+    -- Content holder area (empty; each tab creates its own ScrollingFrame)
+    ContentHolder = Instance.new("Frame")
+    ContentHolder.Name = "ContentHolder"
+    ContentHolder.Size = UDim2.new(1, - (Sidebar.AbsoluteSize.X + 24), 1, -64)
+    ContentHolder.Position = UDim2.new(0, Sidebar.AbsoluteSize.X + 18, 0, 56)
+    ContentHolder.BackgroundTransparency = 1
+    ContentHolder.Parent = MainFrame
+
+    Sidebar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        ContentHolder.Size = UDim2.new(1, - (Sidebar.AbsoluteSize.X + 24), 1, -64)
+        ContentHolder.Position = UDim2.new(0, Sidebar.AbsoluteSize.X + 18, 0, 56)
+    end)
+
+    -- Toast layer
+    ToastLayer = makeToastLayer(MainFrame)
+
+    -- Dragging
+    enableDrag(TitleBar, MainFrame)
+
+    -- Hide/Show
+    CloseBtn.MouseButton1Click:Connect(function()
+        IsVisible = not IsVisible
+        MainFrame.Visible = IsVisible
+        CloseBtn.Text = IsVisible and "HIDE" or "SHOW"
+        showToast(IsVisible and "Panel Shown" or "Panel Hidden", IsVisible and COLOR_GOOD or COLOR_BAD)
+    end)
+
+    -- F4 quick toggle (PC)
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == Enum.KeyCode.F4 then
+            CloseBtn:Activate()
+        end
+    end)
+
+    -- Build Tabs
+    local tabSelf    = createTab("Self",    "Self",     1)
+    local tabTarget  = createTab("Target",  "Target",   2)
+    local tabWorld   = createTab("World",   "World",    3)
+    local tabUtility = createTab("Utility", "Utility",  4)
+    local tabPresets = createTab("Presets", "Presets",  5)
+    local tabInfo    = createTab("Info",    "Info",     6)
+
+    ------------------------------------------------------------------------
+    -- TAB: SELF
+    ------------------------------------------------------------------------
+    do
+        -- WalkSpeed
+        local wsSlider = makeSlider(tabSelf, "WalkSpeed", 0, MAX_SPEED, DEFAULT_SPEED, function(v)
+            if Humanoid and Humanoid.Parent then
+                pcall(function() Humanoid.WalkSpeed = v end)
+            end
+        end)
+
+        -- JumpPower
+        local jpSlider = makeSlider(tabSelf, "JumpPower", 0, MAX_JUMP, DEFAULT_JUMP, function(v)
+            if Humanoid and Humanoid.Parent then
+                pcall(function() Humanoid.JumpPower = v end)
+            end
+        end)
+
+        -- Fly Toggle
+        local _, flyBtn, flyGet, flySet = makeToggle(tabSelf, "Fly", false)
+        flyBtn.MouseButton1Click:Connect(function()
+            local new = not flyGet()
+            flySet(new)
+            if new then
+                showToast("Fly ON", COLOR_GOOD)
+                local conn = RunService.RenderStepped:Connect(function(dt)
+                    if not Character or not Character:FindFirstChild("HumanoidRootPart") then return end
+                    local root = Character.HumanoidRootPart
+                    local dir = Vector3.new(0,0,0)
+
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + Vector3.new(0, 0, -1) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir + Vector3.new(0, 0,  1) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir + Vector3.new(-1, 0, 0) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + Vector3.new( 1, 0, 0) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                        dir = dir + Vector3.new(0, -1, 0)
+                    end
+
+                    if Humanoid then
+                        dir = dir + Humanoid.MoveDirection
+                    end
+
+                    if dir.Magnitude > 0 then
+                        dir = dir.Unit
+                    end
+
+                    local speed = (Humanoid and Humanoid.WalkSpeed or DEFAULT_SPEED) * 1.2
+                    local move = dir * speed * dt
+                    pcall(function()
+                        Character:TranslateBy(move)
+                    end)
+                end)
+                setNamedConn("FlyLoop", conn)
+            else
+                showToast("Fly OFF", COLOR_BAD)
+                clearNamedConn("FlyLoop")
+            end
+        end)
+
+        -- Noclip Toggle
+        local _, ncBtn, ncGet, ncSet = makeToggle(tabSelf, "Noclip (pass through)", false)
+        ncBtn.MouseButton1Click:Connect(function()
+            local new = not ncGet()
+            ncSet(new)
+            if new then
+                showToast("Noclip ON", COLOR_GOOD)
+                local conn = RunService.Stepped:Connect(function()
+                    if not Character then return end
+                    for _, part in ipairs(Character:GetDescendants()) do
+                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                            part.CanCollide = false
+                        end
+                    end
+                end)
+                setNamedConn("NoclipLoop", conn)
+            else
+                showToast("Noclip OFF", COLOR_BAD)
+                clearNamedConn("NoclipLoop")
+                if Character then
+                    for _, part in ipairs(Character:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            pcall(function() part.CanCollide = true end)
+                        end
+                    end
+                end
+            end
+        end)
+
+        -- Infinite Jump
+        local _, ijBtn, ijGet, ijSet = makeToggle(tabSelf, "Infinite Jump", false)
+        ijBtn.MouseButton1Click:Connect(function()
+            local new = not ijGet()
+            ijSet(new)
+            if new then
+                showToast("Infinite Jump ON", COLOR_GOOD)
+                local conn = UserInputService.JumpRequest:Connect(function()
+                    if ijGet() and Humanoid then
+                        pcall(function()
+                            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                        end)
+                    end
+                end)
+                setNamedConn("InfJump", conn)
+            else
+                showToast("Infinite Jump OFF", COLOR_BAD)
+                clearNamedConn("InfJump")
+            end
+        end)
+
+        -- Heal
+        makeButton(tabSelf, "Heal to Full").MouseButton1Click:Connect(function()
+            if Humanoid then
+                pcall(function()
+                    Humanoid.Health = Humanoid.MaxHealth
+                    showToast("Healed", COLOR_GOOD)
+                end)
+            end
+        end)
+
+        -- Sit/Unsit
+        makeButton(tabSelf, "Sit / Unsit").MouseButton1Click:Connect(function()
+            if Humanoid then
+                pcall(function()
+                    Humanoid.Sit = not Humanoid.Sit
+                    showToast(Humanoid.Sit and "Sitting" or "Standing", COLOR_ACENT_BLUE)
+                end)
+            end
+        end)
+
+        -- Invis (local visual)
+        local _, invBtn, invGet, invSet = makeToggle(tabSelf, "Local Invisibility (visual only)", false)
+        invBtn.MouseButton1Click:Connect(function()
+            local new = not invGet()
+            invSet(new)
+            if Character then
+                for _, d in ipairs(Character:GetDescendants()) do
+                    if d:IsA("BasePart") or d:IsA("Decal") then
+                        pcall(function()
+                            d.LocalTransparencyModifier = new and 0.97 or 0
+                        end)
+                    end
+                end
+                showToast(new and "Invis (Local) ON" or "Invis (Local) OFF", new and COLOR_GOOD or COLOR_BAD)
+            end
+        end)
+
+        -- Ragdoll
+        makeButton(tabSelf, "Ragdoll (Physics State)").MouseButton1Click:Connect(function()
+            if Humanoid then
+                pcall(function()
+                    Humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+                    showToast("Ragdoll State", COLOR_ACENT_PINK)
+                end)
+            end
+        end)
+
+        -- Blink forward
+        makeButton(tabSelf, "Blink Forward 10").MouseButton1Click:Connect(function()
+            local root = Character and Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                pcall(function()
+                    root.CFrame = root.CFrame + root.CFrame.LookVector * 10
+                    showToast("Blink", COLOR_ACENT_YELLOW)
+                end)
+            end
+        end)
+
+        -- Teleport up
+        makeButton(tabSelf, "Teleport Up +50").MouseButton1Click:Connect(function()
+            local root = Character and Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                pcall(function()
+                    root.CFrame = root.CFrame * CFrame.new(0, 50, 0)
+                    showToast("Up +50", COLOR_ACENT_YELLOW)
+                end)
+            end
+        end)
+
+        -- Spin 90
+        makeButton(tabSelf, "Spin 90° Yaw").MouseButton1Click:Connect(function()
+            local root = Character and Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                pcall(function()
+                    root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(90), 0)
+                    showToast("Rotate", COLOR_ACENT_BLUE)
+                end)
+            end
+        end)
+    end
+
+    ------------------------------------------------------------------------
+    -- TAB: TARGET (requires remote for server authority)
+    ------------------------------------------------------------------------
+    local TargetPicker = nil
+    do
+        TargetPicker = makePlayerPicker(tabTarget)
+
+        local function ensureRemote()
+            ServerRemote = ServerRemote or ReplicatedStorage:FindFirstChild(SERVER_REMOTE_NAME)
+            return ServerRemote
+        end
+
+        local function targetOrToast()
+            local t = TargetPicker.getTarget()
+            if not t then
+                showToast("No target selected", COLOR_BAD)
+            end
+            return t
+        end
+
+        -- Teleport To
+        makeButton(tabTarget, "Teleport TO Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if t.Character and t.Character:FindFirstChild("HumanoidRootPart") and Character and Character:FindFirstChild("HumanoidRootPart") then
+                Character.HumanoidRootPart.CFrame = t.Character.HumanoidRootPart.CFrame + Vector3.new(1,0,0)
+                showToast("Teleported to "..t.Name, COLOR_GOOD)
+            end
+        end)
+
+        -- Bring (server-side needed; fallback: toast)
+        makeButton(tabTarget, "Bring Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Bring", t.Name)
+                showToast("Bring request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Bring", COLOR_BAD)
+            end
+        end)
+
+        -- Freeze
+        makeButton(tabTarget, "Freeze Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Freeze", t.Name)
+                showToast("Freeze request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Freeze", COLOR_BAD)
+            end
+        end)
+
+        -- Thaw
+        makeButton(tabTarget, "Thaw Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Thaw", t.Name)
+                showToast("Thaw request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Thaw", COLOR_BAD)
+            end
+        end)
+
+        -- Fling
+        makeButton(tabTarget, "Fling Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Fling", t.Name)
+                showToast("Fling request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Fling", COLOR_BAD)
+            end
+        end)
+
+        -- Kill
+        makeButton(tabTarget, "Kill Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Kill", t.Name)
+                showToast("Kill request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Kill", COLOR_BAD)
+            end
+        end)
+
+        -- Heal
+        makeButton(tabTarget, "Heal Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Heal", t.Name)
+                showToast("Heal request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Heal", COLOR_BAD)
+            end
+        end)
+
+        -- Sit/Unsit
+        makeButton(tabTarget, "Toggle Sit Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("ToggleSit", t.Name)
+                showToast("ToggleSit request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for ToggleSit", COLOR_BAD)
+            end
+        end)
+
+        -- Spin
+        makeButton(tabTarget, "Spin Target 360").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Spin", t.Name)
+                showToast("Spin request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Spin", COLOR_BAD)
+            end
+        end)
+
+        -- Annoy (spam small impulses)
+        makeButton(tabTarget, "Annoy Target").MouseButton1Click:Connect(function()
+            local t = targetOrToast()
+            if not t then return end
+            if ensureRemote() then
+                ServerRemote:FireServer("Annoy", t.Name)
+                showToast("Annoy request sent", COLOR_ACENT_BLUE)
+            else
+                showToast("No server remote for Annoy", COLOR_BAD)
+            end
+        end)
+    end
+
+    ------------------------------------------------------------------------
+    -- TAB: WORLD
+    ------------------------------------------------------------------------
+    do
+        -- Gravity
+        local _, gBtn, gGet, gSet = makeToggle(tabWorld, "Low Gravity (0.5x)", false)
+        gBtn.MouseButton1Click:Connect(function()
+            local new = not gGet()
+            gSet(new)
+            if new then
+                Lighting.ClockTime = Lighting.ClockTime -- touch to force refresh
+                workspace.Gravity = 98.1
+                showToast("Gravity 0.5x", COLOR_GOOD)
+            else
+                workspace.Gravity = 196.2
+                showToast("Gravity Normal", COLOR_BAD)
+            end
+        end)
+
+        -- Day/Night
+        local _, dnBtn, dnGet, dnSet = makeToggle(tabWorld, "Toggle Day/Night", false)
+        dnBtn.MouseButton1Click:Connect(function()
+            local new = not dnGet()
+            dnSet(new)
+            if new then
+                Lighting.ClockTime = 0
+                showToast("Night Mode", COLOR_ACENT_PINK)
+            else
+                Lighting.ClockTime = 14
+                showToast("Day Mode", COLOR_ACENT_YELLOW)
+            end
+        end)
+
+        -- Night Vision
+        local _, nvBtn, nvGet, nvSet = makeToggle(tabWorld, "Night Vision (stylized)", false)
+        nvBtn.MouseButton1Click:Connect(function()
+            local new = not nvGet()
+            nvSet(new)
+            if new then
+                Lighting.Brightness = 5
+                Lighting.Ambient   = Color3.fromRGB(0, 255, 200)
+                showToast("Night Vision ON", COLOR_GOOD)
+            else
+                Lighting.Brightness = 2
+                Lighting.Ambient   = Color3.fromRGB(127, 127, 127)
+                showToast("Night Vision OFF", COLOR_BAD)
+            end
+        end)
+
+        -- Neon Outline (character)
+        makeButton(tabWorld, "Toggle Neon Outline (self)").MouseButton1Click:Connect(function()
+            if Character then
+                for _, p in ipairs(Character:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        pcall(function()
+                            p.Material = (p.Material == Enum.Material.Neon) and Enum.Material.SmoothPlastic or Enum.Material.Neon
+                        end)
+                    end
+                end
+                showToast("Neon Toggled", COLOR_ACENT_BLUE)
+            end
+        end)
+
+        -- Slow-Mo Blink (visual)
+        makeButton(tabWorld, "Slow-Mo Blink (1s)").MouseButton1Click:Connect(function()
+            RunService:Set3dRenderingEnabled(false)
+            task.wait(1)
+            RunService:Set3dRenderingEnabled(true)
+            showToast("Blink", COLOR_ACENT_YELLOW)
+        end)
+
+        -- Clear Visual Effects
+        makeButton(tabWorld, "Clear Visual FX").MouseButton1Click:Connect(function()
+            Lighting.Brightness = 2
+            Lighting.Ambient   = Color3.fromRGB(127, 127, 127)
+            showToast("Visual FX Cleared", COLOR_GOOD)
+        end)
+    end
+
+    ------------------------------------------------------------------------
+    -- TAB: UTILITY
+    ------------------------------------------------------------------------
+    do
+        -- Rejoin
+        makeButton(tabUtility, "Rejoin").MouseButton1Click:Connect(function()
+            local placeId = game.PlaceId
+            local jobId   = game.JobId
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+            end)
+            showToast("Rejoining...", COLOR_ACENT_BLUE)
+        end)
+
+        -- Server Hop (best-effort: same place)
+        makeButton(tabUtility, "Server Hop").MouseButton1Click:Connect(function()
+            pcall(function()
+                TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            end)
+            showToast("Server Hop...", COLOR_ACENT_BLUE)
+        end)
+
+        -- Copy Position (to clipboard if Studio)
+        makeButton(tabUtility, "Copy Position (Output)").MouseButton1Click:Connect(function()
+            local root = Character and Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                local p = root.Position
+                print(string.format("[SX] Position: Vector3.new(%.2f, %.2f, %.2f)", p.X, p.Y, p.Z))
+                showToast("Position printed to Output", COLOR_ACENT_BLUE)
+            end
+        end)
+
+        -- Respawn
+        makeButton(tabUtility, "Respawn (Local)").MouseButton1Click:Connect(function()
+            LocalPlayer:LoadCharacter()
+            showToast("Respawned", COLOR_ACENT_YELLOW)
+        end)
+
+        -- Reset ALL (client)
+        makeButton(tabUtility, "Reset All (Client)").MouseButton1Click:Connect(function()
+            -- stop loops
+            clearNamedConn("FlyLoop")
+            clearNamedConn("NoclipLoop")
+            clearNamedConn("InfJump")
+            -- reset toggles visuals via brute force (rebuild)
+            buildPanel()
+            showToast("Client reset", COLOR_GOOD)
+        end)
+
+        -- Debug Dump
+        makeButton(tabUtility, "Print Debug State").MouseButton1Click:Connect(function()
+            print("[SX] Character:", Character)
+            print("[SX] Humanoid:", Humanoid)
+            print("[SX] Gravity:", workspace.Gravity)
+            print("[SX] ClockTime:", Lighting.ClockTime)
+            showToast("Debug printed", COLOR_ACENT_BLUE)
+        end)
+    end
+
+    ------------------------------------------------------------------------
+    -- TAB: PRESETS
+    ------------------------------------------------------------------------
+    do
+        makeButton(tabPresets, "Speedy: Speed 120, Jump 70").MouseButton1Click:Connect(function()
+            if Humanoid then
+                pcall(function()
+                    Humanoid.WalkSpeed = 120
+                    Humanoid.JumpPower = 70
+                end)
+                showToast("Preset: Speedy", COLOR_GOOD)
+            end
+        end)
+
+        makeButton(tabPresets, "Moon: Speed 50, Jump 200, Low Gravity").MouseButton1Click:Connect(function()
+            if Humanoid then
+                pcall(function()
+                    Humanoid.WalkSpeed = 50
+                    Humanoid.JumpPower = 200
+                    workspace.Gravity  = 98.1
+                end)
+                showToast("Preset: Moon", COLOR_GOOD)
+            end
+        end)
+
+        makeButton(tabPresets, "Parkour: Speed 70, Jump 120, Fly OFF").MouseButton1Click:Connect(function()
+            if Humanoid then
+                pcall(function()
+                    Humanoid.WalkSpeed = 70
+                    Humanoid.JumpPower = 120
+                end)
+                clearNamedConn("FlyLoop")
+                showToast("Preset: Parkour", COLOR_GOOD)
+            end
+        end)
+
+        makeButton(tabPresets, "Default: Speed 16, Jump 50, Gravity Normal").MouseButton1Click:Connect(function()
+            if Humanoid then
+                pcall(function()
+                    Humanoid.WalkSpeed = DEFAULT_SPEED
+                    Humanoid.JumpPower = DEFAULT_JUMP
+                    workspace.Gravity  = 196.2
+                end)
+                clearNamedConn("FlyLoop")
+                clearNamedConn("NoclipLoop")
+                clearNamedConn("InfJump")
+                showToast("Preset: Default", COLOR_GOOD)
+            end
+        end)
+    end
+
+    ------------------------------------------------------------------------
+    -- TAB: INFO
+    ------------------------------------------------------------------------
+    do
+        local infoCard = Instance.new("Frame")
+        infoCard.Size = UDim2.new(1, -20, 0, 180)
+        infoCard.Position = UDim2.new(0, 10, 0, 0)
+        infoCard.BackgroundColor3 = COLOR_BG_PANEL
+        infoCard.Parent = tabInfo
+        local icCorner = Instance.new("UICorner", infoCard)
+        icCorner.CornerRadius = UDim.new(0, 14)
+        local icStroke = Instance.new("UIStroke", infoCard)
+        icStroke.Thickness = 2
+        icStroke.Color = COLOR_ACENT_BLUE
+
+        local title = Instance.new("TextLabel")
+        title.BackgroundTransparency = 1
+        title.Text = "SX Cyberpunk Admin"
+        title.Font = Enum.Font.GothamBlack
+        title.TextSize = 20
+        title.TextColor3 = COLOR_ACENT_PINK
+        title.TextXAlignment = Enum.TextXAlignment.Center
+        title.Size = UDim2.new(1, -16, 0, 32)
+        title.Position = UDim2.new(0, 8, 0, 8)
+        title.Parent = infoCard
+
+        local body = Instance.new("TextLabel")
+        body.BackgroundTransparency = 1
+        body.Text = "• One-file LocalScript\n• Mobile-friendly, hoverable\n• Tabs auto-load\n• Client-only features work anywhere\n• Target/server actions require a server RemoteEvent handler (ExploitTestEvent)."
+        body.Font = Enum.Font.Gotham
+        body.TextWrapped = true
+        body.TextSize = 14
+        body.TextColor3 = COLOR_TEXT_MAIN
+        body.TextXAlignment = Enum.TextXAlignment.Left
+        body.TextYAlignment = Enum.TextYAlignment.Top
+        body.Size = UDim2.new(1, -16, 1, -56)
+        body.Position = UDim2.new(0, 8, 0, 44)
+        body.Parent = infoCard
+
+        local badge = Instance.new("TextLabel")
+        badge.BackgroundTransparency = 1
+        badge.Text = "Cyberpunk Theme ✦"
+        badge.Font = Enum.Font.GothamBold
+        badge.TextSize = 14
+        badge.TextColor3 = COLOR_ACENT_YELLOW
+        badge.Size = UDim2.new(1, -16, 0, 20)
+        badge.Position = UDim2.new(0, 8, 1, -24)
+        badge.Parent = infoCard
+    end
+
+    -- Auto-select first tab so commands are visible instantly
+    switchTab("Self")
 end
 
--- Build once
-buildHub()
+-- // LOADER BUTTON (top-center, small)
+local function buildLoaderButton()
+    local bar = Instance.new("Frame")
+    bar.Name = "SX_LoaderBar"
+    bar.Size = UDim2.new(0, 220, 0, 42)
+    bar.AnchorPoint = Vector2.new(0.5, 0)
+    bar.Position = UDim2.new(0.5, 0, 0.05, 0)
+    bar.BackgroundColor3 = COLOR_BG_PANEL
+    bar.Parent = PlayerGui
 
-print("[SX Cyberpunk Admin Hub] loaded.")
+    local corner = Instance.new("UICorner", bar)
+    corner.CornerRadius = UDim.new(0, 12)
+
+    local stroke = Instance.new("UIStroke", bar)
+    stroke.Thickness = 2
+    stroke.Color = COLOR_ACENT_PINK
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -12, 1, -12)
+    btn.Position = UDim2.new(0, 6, 0, 6)
+    btn.BackgroundColor3 = COLOR_BTN_IDLE
+    btn.Text = "Load SX Panel"
+    btn.TextColor3 = COLOR_TEXT_MAIN
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 16
+    btn.AutoButtonColor = false
+    btn.Parent = bar
+
+    local bcorner = Instance.new("UICorner", btn)
+    bcorner.CornerRadius = UDim.new(0, 10)
+
+    applyHover(btn, COLOR_ACENT_BLUE)
+
+    local loaded = false
+
+    btn.MouseButton1Click:Connect(function()
+        loaded = not loaded
+        if loaded then
+            buildPanel()
+            btn.Text = "Unload SX Panel"
+            showToast("Panel Loaded", COLOR_GOOD)
+        else
+            if PanelGui then PanelGui:Destroy() PanelGui = nil end
+            btn.Text = "Load SX Panel"
+            showToast("Panel Unloaded", COLOR_BAD)
+        end
+    end)
+end
+
+-- // INIT
+buildLoaderButton()
+print("[SX] Cyberpunk Admin Panel Ready")
