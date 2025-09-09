@@ -12,7 +12,7 @@ local humanoid = character:WaitForChild("Humanoid")
 
 -- Create main GUI
 local gui = Instance.new("ScreenGui")
-gui.Name = "TestExploitPanel"
+gui.Name = "sx.scripts"
 gui.ResetOnSpawn = false
 gui.Parent = player.PlayerGui
 
