@@ -1,73 +1,52 @@
--- SpeedEX 0.Hub - Complete GUI Menu Script
--- Place this entire script as a LocalScript in StarterGui
+-- SpeedEX 0.Hub - GUI WalkSpeed Controller
+-- Place this as a LocalScript in StarterGui
 
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 
--- Create the GUI
+-- SETTINGS
+local DEFAULT_SPEED = 16
+local MAX_SPEED = 100
+
+-- GUI Setup
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SpeedEXHub"
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
 
 -- Main Frame
 local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 350, 0, 250)
 mainFrame.Position = UDim2.new(0.5, -175, 0.5, -125)
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 mainFrame.BorderSizePixel = 0
-mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
 
--- Rounded corners
-local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 8)
-uiCorner.Parent = mainFrame
-
--- Shadow effect
-local shadow = Instance.new("ImageLabel")
-shadow.Name = "Shadow"
-shadow.Image = "rbxassetid://5554236805"
-shadow.ScaleType = Enum.ScaleType.Slice
-shadow.SliceCenter = Rect.new(23, 23, 277, 277)
-shadow.Size = UDim2.new(1, 30, 1, 30)
-shadow.Position = UDim2.new(0, -15, 0, -15)
-shadow.BackgroundTransparency = 1
-shadow.ZIndex = -1
-shadow.Parent = mainFrame
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
 
 -- Title Bar
-local titleBar = Instance.new("Frame")
-titleBar.Name = "TitleBar"
+local titleBar = Instance.new("Frame", mainFrame)
 titleBar.Size = UDim2.new(1, 0, 0, 32)
-titleBar.Position = UDim2.new(0, 0, 0, 0)
 titleBar.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
 titleBar.BorderSizePixel = 0
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
 
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 8)
-titleCorner.Parent = titleBar
-
-local title = Instance.new("TextLabel")
-title.Name = "Title"
+local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -40, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "speedex.0-hub-"
+title.Text = "SpeedEX Hub"
 title.TextColor3 = Color3.fromRGB(220, 220, 220)
-title.TextXAlignment = Enum.TextXAlignment.Left
 title.Font = Enum.Font.GothamBold
 title.TextSize = 16
-title.Parent = titleBar
+title.TextXAlignment = Enum.TextXAlignment.Left
 
-local closeButton = Instance.new("TextButton")
-closeButton.Name = "CloseButton"
+local closeButton = Instance.new("TextButton", titleBar)
 closeButton.Size = UDim2.new(0, 32, 0, 32)
 closeButton.Position = UDim2.new(1, -32, 0, 0)
 closeButton.BackgroundTransparency = 1
@@ -75,165 +54,113 @@ closeButton.Text = "X"
 closeButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 closeButton.Font = Enum.Font.GothamBold
 closeButton.TextSize = 16
-closeButton.Parent = titleBar
 
--- Drag functionality
-local dragStart
-local startPos
+-- Dragging
+do
+	local dragStart, startPos
+	local function update(input)
+		local delta = input.Position - dragStart
+		mainFrame.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
 
-local function updateInput(input)
-	local delta = input.Position - dragStart
-	mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, 
-		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	titleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragStart, startPos = input.Position, mainFrame.Position
+			local conn
+			conn = input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragStart = nil
+					conn:Disconnect()
+				end
+			end)
+		end
+	end)
+
+	titleBar.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement and dragStart then
+			update(input)
+		end
+	end)
 end
 
-titleBar.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		dragStart = input.Position
-		startPos = mainFrame.Position
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragStart = nil
-			end
-		end)
-	end
-end)
-
-titleBar.InputChanged:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseMovement and dragStart then
-		updateInput(input)
-	end
-end)
-
--- Content
-local contentFrame = Instance.new("Frame")
-contentFrame.Name = "ContentFrame"
+-- Content Frame
+local contentFrame = Instance.new("Frame", mainFrame)
 contentFrame.Size = UDim2.new(1, -20, 1, -52)
 contentFrame.Position = UDim2.new(0, 10, 0, 42)
 contentFrame.BackgroundTransparency = 1
-contentFrame.Parent = mainFrame
 
--- Speed Control
-local speedLabel = Instance.new("TextLabel")
-speedLabel.Name = "SpeedLabel"
+-- Speed Label
+local speedLabel = Instance.new("TextLabel", contentFrame)
 speedLabel.Size = UDim2.new(1, 0, 0, 24)
 speedLabel.Position = UDim2.new(0, 0, 0, 10)
 speedLabel.BackgroundTransparency = 1
 speedLabel.Text = "WALKSPEED"
 speedLabel.TextColor3 = Color3.fromRGB(170, 170, 180)
-speedLabel.TextXAlignment = Enum.TextXAlignment.Left
 speedLabel.Font = Enum.Font.Gotham
 speedLabel.TextSize = 14
-speedLabel.Parent = contentFrame
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-local speedSlider = Instance.new("Frame")
-speedSlider.Name = "SpeedSlider"
-speedSlider.Size = UDim2.new(1, 0, 0, 4)
+-- Slider Bar
+local speedSlider = Instance.new("Frame", contentFrame)
+speedSlider.Size = UDim2.new(1, 0, 0, 6)
 speedSlider.Position = UDim2.new(0, 0, 0, 40)
 speedSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
 speedSlider.BorderSizePixel = 0
+Instance.new("UICorner", speedSlider).CornerRadius = UDim.new(1, 0)
 
-local sliderCorner = Instance.new("UICorner")
-sliderCorner.CornerRadius = UDim.new(1, 0)
-sliderCorner.Parent = speedSlider
-
-local sliderFill = Instance.new("Frame")
-sliderFill.Name = "SliderFill"
-sliderFill.Size = UDim2.new(0.5, 0, 1, 0)
+local sliderFill = Instance.new("Frame", speedSlider)
 sliderFill.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
-sliderFill.BorderSizePixel = 0
+sliderFill.Size = UDim2.new(0.5, 0, 1, 0)
+Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
 
-local fillCorner = Instance.new("UICorner")
-fillCorner.CornerRadius = UDim.new(1, 0)
-fillCorner.Parent = sliderFill
-
-sliderFill.Parent = speedSlider
-speedSlider.Parent = contentFrame
-
-local sliderButton = Instance.new("TextButton")
-sliderButton.Name = "SliderButton"
+local sliderButton = Instance.new("TextButton", speedSlider)
 sliderButton.Size = UDim2.new(0, 20, 0, 20)
-sliderButton.Position = UDim2.new(0.5, -10, 0, 32)
 sliderButton.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
 sliderButton.BorderSizePixel = 0
 sliderButton.Text = ""
+Instance.new("UICorner", sliderButton).CornerRadius = UDim.new(1, 0)
 
-local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(1, 0)
-buttonCorner.Parent = sliderButton
-
-local buttonShadow = Instance.new("ImageLabel")
-buttonShadow.Name = "ButtonShadow"
-buttonShadow.Image = "rbxassetid://5554236805"
-buttonShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
-buttonShadow.ImageTransparency = 0.8
-buttonShadow.ScaleType = Enum.ScaleType.Slice
-buttonShadow.SliceCenter = Rect.new(23, 23, 277, 277)
-buttonShadow.Size = UDim2.new(1, 10, 1, 10)
-buttonShadow.Position = UDim2.new(0, -5, 0, -5)
-buttonShadow.BackgroundTransparency = 1
-buttonShadow.ZIndex = -1
-buttonShadow.Parent = sliderButton
-
-sliderButton.Parent = contentFrame
-
-local speedValue = Instance.new("TextLabel")
-speedValue.Name = "SpeedValue"
+-- Speed Value Display
+local speedValue = Instance.new("TextLabel", contentFrame)
 speedValue.Size = UDim2.new(1, 0, 0, 24)
 speedValue.Position = UDim2.new(0, 0, 0, 70)
 speedValue.BackgroundTransparency = 1
-speedValue.Text = "16"
+speedValue.Text = tostring(DEFAULT_SPEED)
 speedValue.TextColor3 = Color3.fromRGB(220, 220, 220)
-speedValue.TextXAlignment = Enum.TextXAlignment.Center
 speedValue.Font = Enum.Font.GothamBold
 speedValue.TextSize = 18
-speedValue.Parent = contentFrame
+speedValue.TextXAlignment = Enum.TextXAlignment.Center
 
 -- Buttons
-local buttonContainer = Instance.new("Frame")
-buttonContainer.Name = "ButtonContainer"
+local buttonContainer = Instance.new("Frame", contentFrame)
 buttonContainer.Size = UDim2.new(1, 0, 0, 40)
 buttonContainer.Position = UDim2.new(0, 0, 1, -50)
 buttonContainer.BackgroundTransparency = 1
-buttonContainer.Parent = contentFrame
 
-local applyButton = Instance.new("TextButton")
-applyButton.Name = "ApplyButton"
+local applyButton = Instance.new("TextButton", buttonContainer)
 applyButton.Size = UDim2.new(0.45, 0, 1, 0)
-applyButton.Position = UDim2.new(0, 0, 0, 0)
 applyButton.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
-applyButton.BorderSizePixel = 0
 applyButton.Text = "APPLY"
 applyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 applyButton.Font = Enum.Font.GothamBold
 applyButton.TextSize = 14
+Instance.new("UICorner", applyButton).CornerRadius = UDim.new(0, 4)
 
-local applyCorner = Instance.new("UICorner")
-applyCorner.CornerRadius = UDim.new(0, 4)
-applyCorner.Parent = applyButton
-
-applyButton.Parent = buttonContainer
-
-local resetButton = Instance.new("TextButton")
-resetButton.Name = "ResetButton"
+local resetButton = Instance.new("TextButton", buttonContainer)
 resetButton.Size = UDim2.new(0.45, 0, 1, 0)
 resetButton.Position = UDim2.new(0.55, 0, 0, 0)
 resetButton.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-resetButton.BorderSizePixel = 0
 resetButton.Text = "RESET"
 resetButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 resetButton.Font = Enum.Font.Gotham
 resetButton.TextSize = 14
-
-local resetCorner = Instance.new("UICorner")
-resetCorner.CornerRadius = UDim.new(0, 4)
-resetCorner.Parent = resetButton
-
-resetButton.Parent = buttonContainer
+Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 4)
 
 -- Toggle Button
-local toggleButton = Instance.new("TextButton")
-toggleButton.Name = "ToggleButton"
+local toggleButton = Instance.new("TextButton", screenGui)
 toggleButton.Size = UDim2.new(0, 40, 0, 40)
 toggleButton.Position = UDim2.new(0, 10, 0, 10)
 toggleButton.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
@@ -241,44 +168,22 @@ toggleButton.Text = "S"
 toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleButton.Font = Enum.Font.GothamBold
 toggleButton.TextSize = 16
+Instance.new("UICorner", toggleButton).CornerRadius = UDim.new(0, 8)
 
-local toggleCorner = Instance.new("UICorner")
-toggleCorner.CornerRadius = UDim.new(0, 8)
-toggleCorner.Parent = toggleButton
-
-local toggleShadow = Instance.new("ImageLabel")
-toggleShadow.Name = "ToggleShadow"
-toggleShadow.Image = "rbxassetid://5554236805"
-toggleShadow.ScaleType = Enum.ScaleType.Slice
-toggleShadow.SliceCenter = Rect.new(23, 23, 277, 277)
-toggleShadow.Size = UDim2.new(1, 10, 1, 10)
-toggleShadow.Position = UDim2.new(0, -5, 0, -5)
-toggleShadow.BackgroundTransparency = 1
-toggleShadow.ZIndex = -1
-toggleShadow.Parent = toggleButton
-
-toggleButton.Parent = screenGui
-
--- Add everything to the GUI
-mainFrame.Parent = screenGui
-screenGui.Parent = player:WaitForChild("PlayerGui")
-
--- Slider functionality
-local defaultSpeed = 16
-local maxSpeed = 100
+-- SLIDER LOGIC
 local isDragging = false
 
-local function updateSpeed(value)
-	local speed = math.floor(value * maxSpeed)
+local function updateSpeed(percent)
+	local speed = math.floor(percent * MAX_SPEED)
 	speedValue.Text = tostring(speed)
-	sliderFill.Size = UDim2.new(value, 0, 1, 0)
-	sliderButton.Position = UDim2.new(value, -10, 0, 32)
+	sliderFill.Size = UDim2.new(percent, 0, 1, 0)
+	sliderButton.Position = UDim2.new(percent, -10, 0.5, -10)
 	return speed
 end
 
-local function getSliderPosition(x)
-	local relativeX = math.clamp(x - speedSlider.AbsolutePosition.X, 0, speedSlider.AbsoluteSize.X)
-	return relativeX / speedSlider.AbsoluteSize.X
+local function getPercentFromX(x)
+	local rel = math.clamp(x - speedSlider.AbsolutePosition.X, 0, speedSlider.AbsoluteSize.X)
+	return rel / speedSlider.AbsoluteSize.X
 end
 
 sliderButton.MouseButton1Down:Connect(function()
@@ -287,8 +192,8 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-		local position = getSliderPosition(input.Position.X)
-		updateSpeed(position)
+		local p = getPercentFromX(input.Position.X)
+		updateSpeed(p)
 	end
 end)
 
@@ -300,29 +205,27 @@ end)
 
 speedSlider.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		local position = getSliderPosition(input.Position.X)
-		updateSpeed(position)
+		local p = getPercentFromX(input.Position.X)
+		updateSpeed(p)
+		isDragging = true
 	end
 end)
 
--- Button functionality
+-- BUTTONS
 applyButton.MouseButton1Click:Connect(function()
 	local speed = tonumber(speedValue.Text)
-	if speed and speed > 0 and speed <= maxSpeed then
+	if speed and speed > 0 and speed <= MAX_SPEED then
 		humanoid.WalkSpeed = speed
-		
-		-- Visual feedback
-		applyButton.Text = "APPLIED!"
-		applyButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-		wait(1)
-		applyButton.Text = "APPLY"
-		applyButton.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
+		applyButton.Text, applyButton.BackgroundColor3 = "APPLIED!", Color3.fromRGB(0, 200, 100)
+		task.delay(1, function()
+			applyButton.Text, applyButton.BackgroundColor3 = "APPLY", Color3.fromRGB(0, 162, 255)
+		end)
 	end
 end)
 
 resetButton.MouseButton1Click:Connect(function()
-	updateSpeed(defaultSpeed / maxSpeed)
-	humanoid.WalkSpeed = defaultSpeed
+	updateSpeed(DEFAULT_SPEED / MAX_SPEED)
+	humanoid.WalkSpeed = DEFAULT_SPEED
 end)
 
 closeButton.MouseButton1Click:Connect(function()
@@ -333,18 +236,14 @@ toggleButton.MouseButton1Click:Connect(function()
 	mainFrame.Visible = not mainFrame.Visible
 end)
 
--- Initialize
-updateSpeed(defaultSpeed / maxSpeed)
-humanoid.WalkSpeed = defaultSpeed
-
--- Hide menu initially
+-- INIT
+updateSpeed(DEFAULT_SPEED / MAX_SPEED)
+humanoid.WalkSpeed = DEFAULT_SPEED
 mainFrame.Visible = false
 
--- Hotkey to toggle menu (Right Shift)
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	
-	if input.KeyCode == Enum.KeyCode.RightShift then
+-- Hotkey (RightShift)
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if not gpe and input.KeyCode == Enum.KeyCode.RightShift then
 		mainFrame.Visible = not mainFrame.Visible
 	end
 end)
