@@ -1,1146 +1,171 @@
---[[
+-- ⚡ SX Gamepass Panel (Draggable / Scrollable / Minimizeable)
+-- Place this LocalScript in StarterGui
 
-  SX • Cyberpunk Admin Panel (One Big LocalScript)
-  ------------------------------------------------
-  Drop this as a LocalScript under StarterGui in YOUR OWN place for testing.
+local Players = game:GetService("Players")
+local MarketplaceService = game:GetService("MarketplaceService")
+local TweenService = game:GetService("TweenService")
 
-  Highlights
-  • Loads reliably (first tab auto-selected).
-  • Mobile-friendly scaling, smaller footprint, scrollable content.
-  • Cyberpunk 2077 vibe (neon strokes, hover/press effects, tweens).
-  • Button-based admin commands (Self, Target, World, Visuals, Utilities, Fun, Presets, Remotes).
-  • Clean toggle lifecycles (no stacked connections).
-  • Target player dropdown with live refresh.
+local player = Players.LocalPlayer
 
-  Notes
-  • Most “admin” actions on OTHER players won’t replicate in a live FE game without server authority.
-    They will work in your own place with appropriate permissions or replication off.
-  • This panel is for local testing & UI prototyping.
+-- 🟢 Add your gamepass IDs here (from Creator Dashboard)
+local gamepasses = {
+    1378023526
+}
 
-]]--
+-- Colors
+local neonBlue = Color3.fromRGB(0, 255, 255)
+local neonPink = Color3.fromRGB(255, 0, 128)
+local darkBG = Color3.fromRGB(15, 15, 20)
 
---// SERVICES
-local Players         = game:GetService("Players")
-local UIS             = game:GetService("UserInputService")
-local RS              = game:GetService("RunService")
-local TweenService    = game:GetService("TweenService")
-local Lighting        = game:GetService("Lighting")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-- ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "SX_GamepassPanel"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
 
---// LOCAL PLAYER / CHARACTER
-local LocalPlayer     = Players.LocalPlayer
-local PlayerGui       = LocalPlayer:WaitForChild("PlayerGui")
+-- Main Frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 380, 0, 450)
+mainFrame.Position = UDim2.new(0.5, -190, 0.4, -225)
+mainFrame.BackgroundColor3 = darkBG
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
 
-local Character       = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local Humanoid        = Character:FindFirstChildOfClass("Humanoid") or Character:WaitForChild("Humanoid")
+local corner = Instance.new("UICorner", mainFrame)
+corner.CornerRadius = UDim.new(0, 12)
 
--- keep humanoid fresh across respawns
-LocalPlayer.CharacterAdded:Connect(function(char)
-	Character = char
-	Humanoid = char:WaitForChild("Humanoid")
+local stroke = Instance.new("UIStroke", mainFrame)
+stroke.Thickness = 3
+stroke.Color = neonBlue
+
+-- Title Bar
+local titleBar = Instance.new("TextLabel")
+titleBar.Size = UDim2.new(1, -40, 0, 40)
+titleBar.Position = UDim2.new(0, 10, 0, 5)
+titleBar.BackgroundTransparency = 1
+titleBar.Text = "⚡ Gamepasses ⚡"
+titleBar.Font = Enum.Font.GothamBold
+titleBar.TextSize = 20
+titleBar.TextColor3 = neonPink
+titleBar.Parent = mainFrame
+
+-- Minimize Button
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+minimizeBtn.Position = UDim2.new(1, -35, 0, 5)
+minimizeBtn.BackgroundColor3 = neonPink
+minimizeBtn.Text = "-"
+minimizeBtn.Font = Enum.Font.GothamBold
+minimizeBtn.TextSize = 20
+minimizeBtn.TextColor3 = Color3.new(1,1,1)
+minimizeBtn.Parent = mainFrame
+local btnCorner = Instance.new("UICorner", minimizeBtn)
+btnCorner.CornerRadius = UDim.new(0, 8)
+
+-- Scrolling Frame
+local scrollFrame = Instance.new("ScrollingFrame", mainFrame)
+scrollFrame.Size = UDim2.new(1, -20, 1, -60)
+scrollFrame.Position = UDim2.new(0, 10, 0, 50)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.ScrollBarThickness = 6
+scrollFrame.CanvasSize = UDim2.new(0,0,0,0)
+
+local listLayout = Instance.new("UIListLayout", scrollFrame)
+listLayout.Padding = UDim.new(0, 8)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- Auto resize scroll
+listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
 end)
 
---// CONSTANTS (gameplay)
-local DEFAULT_SPEED   = 16
-local DEFAULT_JUMP    = 50
-local MAX_SPEED       = 300
-local MAX_JUMP        = 300
-
---// THEME (Cyberpunky)
-local COLOR_BG        = Color3.fromRGB(12, 12, 16)
-local COLOR_PANEL     = Color3.fromRGB(16, 16, 22)
-local COLOR_CARD      = Color3.fromRGB(20, 20, 28)
-local NEON_BLUE       = Color3.fromRGB(0, 255, 255)
-local NEON_PINK       = Color3.fromRGB(255, 0, 128)
-local NEON_YELLOW     = Color3.fromRGB(255, 255, 0)
-local TEXT_MAIN       = Color3.fromRGB(232, 238, 255)
-local TEXT_DIM        = Color3.fromRGB(180, 188, 210)
-
---// STATE
-local PanelGui        = nil
-local Tabs            = {}
-local CurrentTab      = nil
-local Connections     = {}    -- for toggles (fly/noclip/inf-jump/fps counter etc.)
-local Effects         = {}    -- lighting effects created
-local SelectedTarget  = nil
-local RemoteEvent     = ReplicatedStorage:FindFirstChild("ExploitTestEvent") -- optional
-
---// UTILS ----------------------------
-
-local function safeDisconnect(connName)
-	if Connections[connName] then
-		Connections[connName]:Disconnect()
-		Connections[connName] = nil
-	end
-end
-
-local function neonHoverify(btn, baseBg, baseText)
+-- Function to create gamepass button
+local function makePassButton(passInfo)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 70)
+	btn.BackgroundColor3 = darkBG
+	btn.Text = ""
 	btn.AutoButtonColor = false
 
-	local function tween(props, t)
-		TweenService:Create(btn, TweenInfo.new(t or 0.16, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), props):Play()
-	end
+	local bc = Instance.new("UICorner", btn)
+	bc.CornerRadius = UDim.new(0, 10)
 
-	-- desktop hover
+	local bs = Instance.new("UIStroke", btn)
+	bs.Thickness = 2
+	bs.Color = neonPink
+
+	-- Icon
+	local icon = Instance.new("ImageLabel", btn)
+	icon.Size = UDim2.new(0, 60, 0, 60)
+	icon.Position = UDim2.new(0, 5, 0.5, -30)
+	icon.BackgroundTransparency = 1
+	icon.Image = "rbxassetid://"..passInfo.IconImageAssetId
+
+	-- Name
+	local nameLabel = Instance.new("TextLabel", btn)
+	nameLabel.Size = UDim2.new(1, -80, 0, 30)
+	nameLabel.Position = UDim2.new(0, 75, 0, 10)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.Text = passInfo.Name
+	nameLabel.TextColor3 = neonBlue
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.TextSize = 16
+
+	-- Price
+	local priceLabel = Instance.new("TextLabel", btn)
+	priceLabel.Size = UDim2.new(1, -80, 0, 20)
+	priceLabel.Position = UDim2.new(0, 75, 0, 40)
+	priceLabel.BackgroundTransparency = 1
+	priceLabel.Font = Enum.Font.Gotham
+	priceLabel.Text = tostring(passInfo.PriceInRobux).." R$"
+	priceLabel.TextColor3 = neonPink
+	priceLabel.TextXAlignment = Enum.TextXAlignment.Left
+	priceLabel.TextSize = 14
+
+	-- Hover effect
 	btn.MouseEnter:Connect(function()
-		tween({BackgroundColor3 = NEON_PINK})
-		if btn:FindFirstChild("UIStroke") then
-			btn.UIStroke.Color = NEON_YELLOW
-		end
-		if btn:IsA("TextButton") then
-			btn.TextColor3 = NEON_YELLOW
-		end
+		TweenService:Create(bs, TweenInfo.new(0.2), {Color = neonBlue}):Play()
 	end)
 	btn.MouseLeave:Connect(function()
-		tween({BackgroundColor3 = baseBg})
-		if btn:FindFirstChild("UIStroke") then
-			btn.UIStroke.Color = NEON_PINK
-		end
-		if btn:IsA("TextButton") then
-			btn.TextColor3 = baseText
-		end
+		TweenService:Create(bs, TweenInfo.new(0.2), {Color = neonPink}):Play()
 	end)
 
-	-- press feedback (works for touch + mouse)
-	btn.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
-			btn:TweenSize(btn.Size + UDim2.new(0, 0, 0, -2), Enum.EasingDirection.Out, Enum.EasingStyle.Sine, 0.08, true)
-		end
-	end)
-	btn.InputEnded:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
-			btn:TweenSize(btn.Size, Enum.EasingDirection.Out, Enum.EasingStyle.Sine, 0.08, true)
-		end
-	end)
-end
-
-local function makeStroke(parent, color, thickness)
-	local s = Instance.new("UIStroke")
-	s.Color = color or NEON_BLUE
-	s.Thickness = thickness or 2
-	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	s.Parent = parent
-	return s
-end
-
-local function makeCorner(parent, radius)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, radius or 10)
-	c.Parent = parent
-	return c
-end
-
-local function makePadding(parent, p)
-	local pad = Instance.new("UIPadding")
-	pad.PaddingTop    = UDim.new(0, p)
-	pad.PaddingBottom = UDim.new(0, p)
-	pad.PaddingLeft   = UDim.new(0, p)
-	pad.PaddingRight  = UDim.new(0, p)
-	pad.Parent = parent
-	return pad
-end
-
-local function createButton(parent, text)
-	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(1, -12, 0, 40)
-	b.BackgroundColor3 = COLOR_CARD
-	b.Text = text
-	b.TextColor3 = TEXT_MAIN
-	b.Font = Enum.Font.GothamBold
-	b.TextSize = 16
-	b.AutoButtonColor = false
-	b.Parent = parent
-	makeCorner(b, 10)
-	makeStroke(b, NEON_PINK, 2)
-	neonHoverify(b, COLOR_CARD, TEXT_MAIN)
-	return b
-end
-
-local function createToggle(parent, labelText)
-	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(1, -12, 0, 44)
-	frame.BackgroundColor3 = COLOR_CARD
-	frame.Parent = parent
-	makeCorner(frame, 10)
-	makeStroke(frame, NEON_BLUE, 2)
-
-	local lbl = Instance.new("TextLabel")
-	lbl.BackgroundTransparency = 1
-	lbl.Size = UDim2.new(1, -110, 1, 0)
-	lbl.Position = UDim2.new(0, 12, 0, 0)
-	lbl.Text = labelText
-	lbl.TextColor3 = TEXT_MAIN
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.Font = Enum.Font.GothamSemibold
-	lbl.TextSize = 16
-	lbl.Parent = frame
-
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(0, 84, 0, 32)
-	btn.Position = UDim2.new(1, -96, 0.5, -16)
-	btn.BackgroundColor3 = Color3.fromRGB(40, 44, 56)
-	btn.Text = "OFF"
-	btn.TextColor3 = TEXT_DIM
-	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 14
-	btn.AutoButtonColor = false
-	btn.Parent = frame
-	makeCorner(btn, 8)
-	makeStroke(btn, NEON_PINK, 2)
-	neonHoverify(btn, Color3.fromRGB(40, 44, 56), TEXT_DIM)
-
-	return frame, btn, lbl
-end
-
-local function createSpacer(parent, h)
-	local sp = Instance.new("Frame")
-	sp.BackgroundTransparency = 1
-	sp.Size = UDim2.new(1, 0, 0, h or 8)
-	sp.Parent = parent
-	return sp
-end
-
-local function createHeader(parent, text)
-	local lbl = Instance.new("TextLabel")
-	lbl.BackgroundTransparency = 1
-	lbl.Size = UDim2.new(1, 0, 0, 28)
-	lbl.Text = text
-	lbl.TextColor3 = NEON_YELLOW
-	lbl.Font = Enum.Font.GothamBlack
-	lbl.TextSize = 18
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.Parent = parent
-	return lbl
-end
-
-local function createScroll(parent)
-	local sc = Instance.new("ScrollingFrame")
-	sc.Size = UDim2.new(1, 0, 1, 0)
-	sc.CanvasSize = UDim2.new(0, 0, 0, 0)
-	sc.ScrollBarThickness = 6
-	sc.Active = true
-	sc.BackgroundTransparency = 1
-	sc.Parent = parent
-
-	local list = Instance.new("UIListLayout")
-	list.Padding = UDim.new(0, 8)
-	list.FillDirection = Enum.FillDirection.Vertical
-	list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Parent = sc
-
-	local function updateCanvas()
-		sc.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 20)
-	end
-	list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
-	updateCanvas()
-
-	return sc
-end
-
-local function tweenColor(inst, props, t)
-	TweenService:Create(inst, TweenInfo.new(t or 0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), props):Play()
-end
-
--- drag helper (mobile-friendly)
-local function makeDrag(header, rootFrame)
-	local dragging = false
-	local dragStart, startPos
-
-	header.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			dragStart = input.Position
-			startPos = rootFrame.Position
-			local conn
-			conn = input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					dragging = false
-					if conn then conn:Disconnect() end
-				end
-			end)
-		end
+	-- Click → Prompt purchase
+	btn.MouseButton1Click:Connect(function()
+		MarketplaceService:PromptGamePassPurchase(player, passInfo.AssetId)
 	end)
 
-	header.InputChanged:Connect(function(input)
-		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-			local delta = input.Position - dragStart
-			rootFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-		end
-	end)
+	btn.Parent = scrollFrame
 end
 
--- small helper for humanoid safety
-local function withHumanoid(fn)
-	if Humanoid and Humanoid.Parent then
-		local ok, err = pcall(fn)
-		if not ok then warn(err) end
+-- Load gamepasses
+for _,id in ipairs(gamepasses) do
+	local info
+	pcall(function()
+		info = MarketplaceService:GetProductInfo(id, Enum.InfoType.GamePass)
+	end)
+	if info then
+		makePassButton(info)
 	end
 end
 
--- find target helpers
-local function listOtherPlayers()
-	local arr = {}
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer then
-			table.insert(arr, p)
-		end
+-- Minimize toggle
+local minimized = false
+minimizeBtn.MouseButton1Click:Connect(function()
+	minimized = not minimized
+	if minimized then
+		TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 200, 0, 50)}):Play()
+		scrollFrame.Visible = false
+		titleBar.Text = "⚡ Passes (Minimized)"
+	else
+		TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 380, 0, 450)}):Play()
+		task.wait(0.3)
+		scrollFrame.Visible = true
+		titleBar.Text = "⚡ Gamepasses ⚡"
 	end
-	table.sort(arr, function(a,b) return a.Name < b.Name end)
-	return arr
-end
+end)
 
---// PANEL CONSTRUCTION ----------------------------
+print("[SX Gamepass Panel Loaded ✅]")
 
-local function BuildPanel()
-	if PanelGui then PanelGui:Destroy() end
-
-	PanelGui = Instance.new("ScreenGui")
-	PanelGui.Name = "SX_AdminPanel_Cyber"
-	PanelGui.IgnoreGuiInset = true
-	PanelGui.ResetOnSpawn = false
-	PanelGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	PanelGui.Parent = PlayerGui
-
-	-- Loader button (small, mobile friendly)
-	local loader = Instance.new("TextButton")
-	loader.Name = "SX_Loader"
-	loader.AnchorPoint = Vector2.new(0.5, 0)
-	loader.Position = UDim2.new(0.5, 0, 0.03, 0)
-	loader.Size = UDim2.new(0, 180, 0, 42)
-	loader.BackgroundColor3 = COLOR_PANEL
-	loader.Text = "Open SX Panel"
-	loader.TextColor3 = TEXT_MAIN
-	loader.Font = Enum.Font.GothamBold
-	loader.TextSize = 16
-	loader.AutoButtonColor = false
-	loader.Parent = PanelGui
-	makeCorner(loader, 10)
-	makeStroke(loader, NEON_PINK, 2)
-	neonHoverify(loader, COLOR_PANEL, TEXT_MAIN)
-
-	-- Main root
-	local root = Instance.new("Frame")
-	root.Name = "SX_Root"
-	-- Mobile-first smaller footprint (roughly 80% width, 70% height)
-	root.Size = UDim2.new(0.86, 0, 0.72, 0)
-	root.Position = UDim2.new(0.5, 0, 0.55, 0)
-	root.AnchorPoint = Vector2.new(0.5, 0.5)
-	root.BackgroundColor3 = COLOR_BG
-	root.Visible = false
-	root.Parent = PanelGui
-	makeCorner(root, 14)
-	makeStroke(root, NEON_BLUE, 3)
-	makePadding(root, 10)
-
-	-- Title bar
-	local header = Instance.new("Frame")
-	header.Name = "Header"
-	header.Size = UDim2.new(1, 0, 0, 44)
-	header.BackgroundColor3 = COLOR_PANEL
-	header.Parent = root
-	makeCorner(header, 10)
-	makeStroke(header, NEON_PINK, 2)
-
-	local title = Instance.new("TextLabel")
-	title.BackgroundTransparency = 1
-	title.Size = UDim2.new(1, -160, 1, 0)
-	title.Position = UDim2.new(0, 12, 0, 0)
-	title.Text = "⚡ SX Cyber Admin • Local Test"
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.TextColor3 = TEXT_MAIN
-	title.Font = Enum.Font.GothamBlack
-	title.TextSize = 18
-	title.Parent = header
-
-	local closeBtn = Instance.new("TextButton")
-	closeBtn.Size = UDim2.new(0, 44, 0, 32)
-	closeBtn.Position = UDim2.new(1, -52, 0.5, -16)
-	closeBtn.BackgroundColor3 = COLOR_CARD
-	closeBtn.Text = "✕"
-	closeBtn.TextColor3 = TEXT_MAIN
-	closeBtn.Font = Enum.Font.GothamBold
-	closeBtn.TextSize = 18
-	closeBtn.AutoButtonColor = false
-	closeBtn.Parent = header
-	makeCorner(closeBtn, 8)
-	makeStroke(closeBtn, NEON_PINK, 2)
-	neonHoverify(closeBtn, COLOR_CARD, TEXT_MAIN)
-
-	makeDrag(header, root)
-
-	-- Body split: left tabs, right content
-	local body = Instance.new("Frame")
-	body.Name = "Body"
-	body.BackgroundTransparency = 1
-	body.Size = UDim2.new(1, 0, 1, -54)
-	body.Position = UDim2.new(0, 0, 0, 54)
-	body.Parent = root
-
-	local left = Instance.new("Frame")
-	left.Name = "Left"
-	left.Size = UDim2.new(0.28, 0, 1, 0)
-	left.BackgroundColor3 = COLOR_PANEL
-	left.Parent = body
-	makeCorner(left, 10)
-	makeStroke(left, NEON_BLUE, 2)
-	makePadding(left, 10)
-
-	local right = Instance.new("Frame")
-	right.Name = "Right"
-	right.Size = UDim2.new(0.72, -10, 1, 0)
-	right.Position = UDim2.new(0.28, 10, 0, 0)
-	right.BackgroundColor3 = COLOR_PANEL
-	right.Parent = body
-	makeCorner(right, 10)
-	makeStroke(right, NEON_BLUE, 2)
-	makePadding(right, 8)
-
-	-- Tabs list (left)
-	local tabList = Instance.new("UIListLayout")
-	tabList.Padding = UDim.new(0, 8)
-	tabList.FillDirection = Enum.FillDirection.Vertical
-	tabList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	tabList.SortOrder = Enum.SortOrder.LayoutOrder
-	tabList.Parent = left
-
-	local function createTab(name, onSelect)
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(1, -6, 0, 36)
-		btn.BackgroundColor3 = COLOR_CARD
-		btn.Text = name
-		btn.TextColor3 = TEXT_MAIN
-		btn.Font = Enum.Font.GothamSemibold
-		btn.TextSize = 15
-		btn.AutoButtonColor = false
-		btn.Parent = left
-		makeCorner(btn, 8)
-		makeStroke(btn, NEON_PINK, 2)
-		neonHoverify(btn, COLOR_CARD, TEXT_MAIN)
-
-		local container = Instance.new("Frame")
-		container.Name = "Tab_"..name
-		container.Size = UDim2.new(1, 0, 1, 0)
-		container.BackgroundTransparency = 1
-		container.Parent = right
-		container.Visible = false
-
-		local scroller = createScroll(container)
-
-		Tabs[name] = {
-			Button = btn,
-			Root = container,
-			Scroll = scroller,
-			Select = onSelect
-		}
-
-		btn.MouseButton1Click:Connect(function()
-			for tName, t in pairs(Tabs) do
-				t.Root.Visible = false
-				if t.Button:FindFirstChild("UIStroke") then
-					t.Button.UIStroke.Color = NEON_PINK
-				end
-			end
-			container.Visible = true
-			btn.UIStroke.Color = NEON_YELLOW
-			CurrentTab = name
-			if onSelect then onSelect(scroller) end
-		end)
-	end
-
-	--// SELF TAB ---------------------------------------------------
-	createTab("Self", function(sc)
-		sc:ClearAllChildren() -- rebuild cleanly on each select
-		local list = Instance.new("UIListLayout", sc)
-		list.Padding = UDim.new(0, 8)
-		list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		list.SortOrder = Enum.SortOrder.LayoutOrder
-
-		createHeader(sc, "Movement")
-		do
-			local f1, t1 = createToggle(sc, "Super Speed (100)")
-			t1.MouseButton1Click:Connect(function()
-				withHumanoid(function()
-					if t1.Text == "OFF" then
-						Humanoid.WalkSpeed = 100
-						t1.Text = "ON"
-						tweenColor(t1, {BackgroundColor3 = NEON_PINK}, 0.12)
-						t1.TextColor3 = NEON_YELLOW
-					else
-						Humanoid.WalkSpeed = DEFAULT_SPEED
-						t1.Text = "OFF"
-						tweenColor(t1, {BackgroundColor3 = Color3.fromRGB(40,44,56)}, 0.12)
-						t1.TextColor3 = TEXT_DIM
-					end
-				end)
-			end)
-
-			local f2, t2 = createToggle(sc, "Super Jump (200)")
-			t2.MouseButton1Click:Connect(function()
-				withHumanoid(function()
-					if t2.Text == "OFF" then
-						Humanoid.JumpPower = 200
-						t2.Text = "ON"
-						tweenColor(t2, {BackgroundColor3 = NEON_PINK}, 0.12)
-						t2.TextColor3 = NEON_YELLOW
-					else
-						Humanoid.JumpPower = DEFAULT_JUMP
-						t2.Text = "OFF"
-						tweenColor(t2, {BackgroundColor3 = Color3.fromRGB(40,44,56)}, 0.12)
-						t2.TextColor3 = TEXT_DIM
-					end
-				end)
-			end)
-
-			local f3, t3 = createToggle(sc, "Infinite Jump")
-			t3.MouseButton1Click:Connect(function()
-				if t3.Text == "OFF" then
-					t3.Text = "ON"
-					t3.TextColor3 = NEON_YELLOW
-					tweenColor(t3, {BackgroundColor3 = NEON_PINK}, 0.12)
-					safeDisconnect("InfJump")
-					Connections["InfJump"] = UIS.JumpRequest:Connect(function()
-						withHumanoid(function()
-							Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-						end)
-					end)
-				else
-					t3.Text = "OFF"
-					t3.TextColor3 = TEXT_DIM
-					tweenColor(t3, {BackgroundColor3 = Color3.fromRGB(40,44,56)}, 0.12)
-					safeDisconnect("InfJump")
-				end
-			end)
-
-			local f4, t4 = createToggle(sc, "Noclip")
-			t4.MouseButton1Click:Connect(function()
-				if t4.Text == "OFF" then
-					t4.Text = "ON"
-					t4.TextColor3 = NEON_YELLOW
-					tweenColor(t4, {BackgroundColor3 = NEON_PINK}, 0.12)
-					safeDisconnect("Noclip")
-					Connections["Noclip"] = RS.Stepped:Connect(function()
-						if not Character then return end
-						for _, p in ipairs(Character:GetDescendants()) do
-							if p:IsA("BasePart") then
-								p.CanCollide = false
-							end
-						end
-					end)
-				else
-					t4.Text = "OFF"
-					t4.TextColor3 = TEXT_DIM
-					tweenColor(t4, {BackgroundColor3 = Color3.fromRGB(40,44,56)}, 0.12)
-					safeDisconnect("Noclip")
-					-- try to restore
-					if Character then
-						for _, p in ipairs(Character:GetDescendants()) do
-							if p:IsA("BasePart") then
-								p.CanCollide = true
-							end
-						end
-					end
-				end
-			end)
-
-			local f5, t5 = createToggle(sc, "Fly (WASD + Space/Shift)")
-			t5.MouseButton1Click:Connect(function()
-				if t5.Text == "OFF" then
-					t5.Text = "ON"
-					t5.TextColor3 = NEON_YELLOW
-					tweenColor(t5, {BackgroundColor3 = NEON_PINK}, 0.12)
-					safeDisconnect("Fly")
-					Connections["Fly"] = RS.RenderStepped:Connect(function(dt)
-						if not Character or not Character.PrimaryPart then return end
-						local dir = Vector3.new()
-						if UIS:IsKeyDown(Enum.KeyCode.W) then dir += Vector3.new(0,0,-1) end
-						if UIS:IsKeyDown(Enum.KeyCode.S) then dir += Vector3.new(0,0, 1) end
-						if UIS:IsKeyDown(Enum.KeyCode.A) then dir += Vector3.new(-1,0,0) end
-						if UIS:IsKeyDown(Enum.KeyCode.D) then dir += Vector3.new( 1,0,0) end
-						if UIS:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0,1,0) end
-						if UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir += Vector3.new(0,-1,0) end
-						if dir.Magnitude > 0 then
-							dir = dir.Unit
-						end
-						local spd = (Humanoid and Humanoid.WalkSpeed or DEFAULT_SPEED) * 1.2
-						Character:TranslateBy(dir * spd * dt)
-					end)
-				else
-					t5.Text = "OFF"
-					t5.TextColor3 = TEXT_DIM
-					tweenColor(t5, {BackgroundColor3 = Color3.fromRGB(40,44,56)}, 0.12)
-					safeDisconnect("Fly")
-				end
-			end)
-		end
-
-		createSpacer(sc, 8)
-		createHeader(sc, "Teleports")
-		do
-			local b1 = createButton(sc, "Teleport Up +50")
-			b1.MouseButton1Click:Connect(function()
-				if Character and Character:FindFirstChild("HumanoidRootPart") then
-					Character.HumanoidRootPart.CFrame += Vector3.new(0, 50, 0)
-				end
-			end)
-
-			local b2 = createButton(sc, "Blink Forward +10")
-			b2.MouseButton1Click:Connect(function()
-				if Character and Character:FindFirstChild("HumanoidRootPart") then
-					local root = Character.HumanoidRootPart
-					Character:SetPrimaryPartCFrame(root.CFrame + root.CFrame.LookVector * 10)
-				end
-			end)
-
-			local b3 = createButton(sc, "Teleport To Cursor/Touch (best-effort)")
-			b3.MouseButton1Click:Connect(function()
-				local mouse = LocalPlayer:GetMouse()
-				if mouse and mouse.Hit and Character and Character:FindFirstChild("HumanoidRootPart") then
-					local hit = mouse.Hit
-					Character.HumanoidRootPart.CFrame = CFrame.new(hit.p + Vector3.new(0, 3, 0))
-				end
-			end)
-		end
-
-		createSpacer(sc, 8)
-		createHeader(sc, "Health & Misc")
-		do
-			local b1 = createButton(sc, "Heal to Full")
-			b1.MouseButton1Click:Connect(function()
-				withHumanoid(function()
-					Humanoid.Health = Humanoid.MaxHealth
-				end)
-			end)
-
-			local b2 = createButton(sc, "Sit / Unsit")
-			b2.MouseButton1Click:Connect(function()
-				withHumanoid(function()
-					Humanoid.Sit = not Humanoid.Sit
-				end)
-			end)
-
-			local b3 = createButton(sc, "Reset Client Values")
-			b3.MouseButton1Click:Connect(function()
-				withHumanoid(function()
-					Humanoid.WalkSpeed = DEFAULT_SPEED
-					Humanoid.JumpPower = DEFAULT_JUMP
-					Humanoid.Sit = false
-				end)
-				-- stop toggles
-				for _, key in ipairs({"InfJump","Noclip","Fly"}) do
-					safeDisconnect(key)
-				end
-			end)
-		end)
-	end)
-
-	--// TARGET TAB -------------------------------------------------
-	createTab("Target", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc)
-		list.Padding = UDim.new(0, 8)
-		list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-
-		createHeader(sc, "Select Target")
-		local targetCard = Instance.new("Frame")
-		targetCard.Size = UDim2.new(1, -12, 0, 56)
-		targetCard.BackgroundColor3 = COLOR_CARD
-		targetCard.Parent = sc
-		makeCorner(targetCard, 10)
-		makeStroke(targetCard, NEON_BLUE, 2)
-		makePadding(targetCard, 8)
-
-		local drop = Instance.new("TextButton")
-		drop.Size = UDim2.new(1, 0, 1, 0)
-		drop.BackgroundColor3 = COLOR_PANEL
-		drop.Text = "Choose Player ▼"
-		drop.TextColor3 = TEXT_MAIN
-		drop.Font = Enum.Font.GothamBold
-		drop.TextSize = 15
-		drop.AutoButtonColor = false
-		drop.Parent = targetCard
-		makeCorner(drop, 8)
-		makeStroke(drop, NEON_PINK, 2)
-		neonHoverify(drop, COLOR_PANEL, TEXT_MAIN)
-
-		local dropdownFrame = Instance.new("Frame")
-		dropdownFrame.Size = UDim2.new(1, 0, 0, 0)
-		dropdownFrame.BackgroundColor3 = COLOR_PANEL
-		dropdownFrame.Visible = false
-		dropdownFrame.Parent = sc
-		makeCorner(dropdownFrame, 8)
-		makeStroke(dropdownFrame, NEON_BLUE, 2)
-
-		local list2 = Instance.new("UIListLayout", dropdownFrame)
-		list2.Padding = UDim.new(0, 6)
-		list2.HorizontalAlignment = Enum.HorizontalAlignment.Center
-
-		local function rebuildDropdown()
-			dropdownFrame:ClearAllChildren()
-			local _list = Instance.new("UIListLayout", dropdownFrame)
-			_list.Padding = UDim.new(0, 6)
-			_list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-
-			for _, p in ipairs(listOtherPlayers()) do
-				local b = createButton(dropdownFrame, p.Name)
-				b.MouseButton1Click:Connect(function()
-					SelectedTarget = p
-					drop.Text = "Target: "..p.Name.." ✓"
-					dropdownFrame.Visible = false
-					dropdownFrame.Size = UDim2.new(1, -12, 0, 0)
-				end)
-			end
-
-			task.delay(0.01, function()
-				dropdownFrame.Size = UDim2.new(1, -12, 0, list2.AbsoluteContentSize.Y + 12)
-			end)
-		end
-		rebuildDropdown()
-
-		drop.MouseButton1Click:Connect(function()
-			if dropdownFrame.Visible then
-				dropdownFrame.Visible = false
-				dropdownFrame.Size = UDim2.new(1, -12, 0, 0)
-			else
-				rebuildDropdown()
-				dropdownFrame.Visible = true
-				dropdownFrame.Size = UDim2.new(1, -12, 0, list2.AbsoluteContentSize.Y + 12)
-			end
-		end)
-
-		-- refresh dropdown when players change
-		Players.PlayerAdded:Connect(rebuildDropdown)
-		Players.PlayerRemoving:Connect(function(p)
-			if SelectedTarget == p then
-				SelectedTarget = nil
-				drop.Text = "Choose Player ▼"
-			end
-			rebuildDropdown()
-		end)
-
-		createSpacer(sc, 8)
-		createHeader(sc, "Admin Actions (Client-Side Best-Effort)")
-
-		local function requireTarget()
-			return SelectedTarget and SelectedTarget.Character and SelectedTarget.Character:FindFirstChild("HumanoidRootPart")
-		end
-
-		local tgt = function() return SelectedTarget.Character.HumanoidRootPart end
-
-		local b1 = createButton(sc, "Bring (to me)")
-		b1.MouseButton1Click:Connect(function()
-			if requireTarget() and Character and Character.PrimaryPart then
-				pcall(function()
-					tgt().CFrame = Character.PrimaryPart.CFrame + Vector3.new(2,0,0)
-				end)
-			end
-		end)
-
-		local b2 = createButton(sc, "Goto (to target)")
-		b2.MouseButton1Click:Connect(function()
-			if requireTarget() and Character and Character.PrimaryPart then
-				pcall(function()
-					Character:SetPrimaryPartCFrame(tgt().CFrame + Vector3.new(2,0,0))
-				end)
-			end
-		end)
-
-		local b3 = createButton(sc, "Freeze (anchor)")
-		b3.MouseButton1Click:Connect(function()
-			if requireTarget() then
-				pcall(function()
-					tgt().Anchored = true
-				end)
-			end
-		end)
-
-		local b4 = createButton(sc, "Thaw (unanchor)")
-		b4.MouseButton1Click:Connect(function()
-			if requireTarget() then
-				pcall(function()
-					tgt().Anchored = false
-				end)
-			end
-		end)
-
-		local b5 = createButton(sc, "Fling (impulse)")
-		b5.MouseButton1Click:Connect(function()
-			if requireTarget() then
-				pcall(function()
-					tgt().Velocity = Vector3.new(0, 120, 0) + Vector3.new(math.random(-60,60), 0, math.random(-60,60))
-				end)
-			end
-		end)
-
-		local b6 = createButton(sc, "Sit Target")
-		b6.MouseButton1Click:Connect(function()
-			if SelectedTarget and SelectedTarget.Character then
-				local h = SelectedTarget.Character:FindFirstChildOfClass("Humanoid")
-				if h then pcall(function() h.Sit = true end) end
-			end
-		end)
-
-		local b7 = createButton(sc, "Kill Target (try)")
-		b7.MouseButton1Click:Connect(function()
-			if SelectedTarget and SelectedTarget.Character then
-				local h = SelectedTarget.Character:FindFirstChildOfClass("Humanoid")
-				if h then pcall(function() h.Health = 0 end) end
-			end
-		end)
-	end)
-
-	--// WORLD TAB --------------------------------------------------
-	createTab("World", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc)
-		list.Padding = UDim.new(0, 8)
-		list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-
-		createHeader(sc, "Gravity")
-		do
-			local b1 = createButton(sc, "Gravity: 196.2 (Default)")
-			b1.MouseButton1Click:Connect(function() workspace.Gravity = 196.2 end)
-			local b2 = createButton(sc, "Gravity: 98 (Half)")
-			b2.MouseButton1Click:Connect(function() workspace.Gravity = 98 end)
-			local b3 = createButton(sc, "Gravity: 16 (Moonish)")
-			b3.MouseButton1Click:Connect(function() workspace.Gravity = 16 end)
-		end
-
-		createSpacer(sc, 6)
-		createHeader(sc, "Waypoints")
-		local savedCFrame = nil
-		do
-			local b1 = createButton(sc, "Save Current Position")
-			b1.MouseButton1Click:Connect(function()
-				if Character and Character.PrimaryPart then
-					savedCFrame = Character.PrimaryPart.CFrame
-				end
-			end)
-			local b2 = createButton(sc, "Teleport to Saved Position")
-			b2.MouseButton1Click:Connect(function()
-				if savedCFrame and Character and Character.PrimaryPart then
-					Character:SetPrimaryPartCFrame(savedCFrame)
-				end
-			end)
-		end)
-
-		createSpacer(sc, 6)
-		createHeader(sc, "Lighting • Cyber FX")
-		do
-			local f1, t1 = createToggle(sc, "Night Vision (Ambient + Brightness)")
-			t1.MouseButton1Click:Connect(function()
-				if t1.Text == "OFF" then
-					t1.Text = "ON"; t1.TextColor3 = NEON_YELLOW; tweenColor(t1, {BackgroundColor3 = NEON_PINK})
-					if not Effects.Night then
-						Effects.Night = {}
-						Effects.Night.AmbientOld = Lighting.Ambient
-						Effects.Night.BrightnessOld = Lighting.Brightness
-					end
-					Lighting.Ambient = Color3.fromRGB(0, 255, 200)
-					Lighting.Brightness = 5
-				else
-					t1.Text = "OFF"; t1.TextColor3 = TEXT_DIM; tweenColor(t1, {BackgroundColor3 = Color3.fromRGB(40,44,56)})
-					if Effects.Night then
-						Lighting.Ambient = Effects.Night.AmbientOld or Color3.new(0,0,0)
-						Lighting.Brightness = Effects.Night.BrightnessOld or 2
-					end
-				end
-			end)
-
-			local f2, t2 = createToggle(sc, "Bloom + ColorShift (Stylize)")
-			t2.MouseButton1Click:Connect(function()
-				if t2.Text == "OFF" then
-					t2.Text = "ON"; t2.TextColor3 = NEON_YELLOW; tweenColor(t2, {BackgroundColor3 = NEON_PINK})
-					if not Effects.Bloom then
-						local bloom = Instance.new("BloomEffect"); bloom.Intensity = 0.9; bloom.Threshold = 0.8; bloom.Parent = Lighting
-						local cc = Instance.new("ColorCorrectionEffect"); cc.Saturation = 0.2; cc.TintColor = Color3.fromRGB(255, 80, 200); cc.Parent = Lighting
-						Effects.Bloom = {Bloom=bloom, CC=cc}
-					end
-				else
-					t2.Text = "OFF"; t2.TextColor3 = TEXT_DIM; tweenColor(t2, {BackgroundColor3 = Color3.fromRGB(40,44,56)})
-					if Effects.Bloom then
-						if Effects.Bloom.Bloom then Effects.Bloom.Bloom:Destroy() end
-						if Effects.Bloom.CC then Effects.Bloom.CC:Destroy() end
-						Effects.Bloom = nil
-					end
-				end
-			end)
-		end
-	end)
-
-	--// VISUALS TAB -----------------------------------------------
-	createTab("Visuals", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc); list.Padding = UDim.new(0,8)
-
-		createHeader(sc, "Character Looks")
-		do
-			local b1 = createButton(sc, "Toggle Neon Material (Parts)")
-			b1.MouseButton1Click:Connect(function()
-				if not Character then return end
-				for _, p in ipairs(Character:GetDescendants()) do
-					if p:IsA("BasePart") then
-						p.Material = (p.Material == Enum.Material.Neon) and Enum.Material.SmoothPlastic or Enum.Material.Neon
-					end
-				end
-			end)
-
-			local b2 = createButton(sc, "Spin 90° Yaw")
-			b2.MouseButton1Click:Connect(function()
-				if Character and Character.PrimaryPart then
-					Character:SetPrimaryPartCFrame(Character.PrimaryPart.CFrame * CFrame.Angles(0, math.rad(90), 0))
-				end
-			end)
-		end)
-
-		createSpacer(sc, 8)
-		createHeader(sc, "HUD Extras")
-		do
-			local fpsLabel = Instance.new("TextLabel")
-			fpsLabel.Size = UDim2.new(1, -12, 0, 30)
-			fpsLabel.BackgroundColor3 = COLOR_CARD
-			fpsLabel.TextColor3 = NEON_YELLOW
-			fpsLabel.Font = Enum.Font.GothamSemibold
-			fpsLabel.TextSize = 14
-			fpsLabel.Text = "FPS: --"
-			fpsLabel.Parent = sc
-			makeCorner(fpsLabel, 8)
-			makeStroke(fpsLabel, NEON_PINK, 2)
-
-			local f1, t1 = createToggle(sc, "Show Live FPS (top-left)")
-			t1.MouseButton1Click:Connect(function()
-				if t1.Text == "OFF" then
-					t1.Text = "ON"; t1.TextColor3 = NEON_YELLOW; tweenColor(t1, {BackgroundColor3 = NEON_PINK})
-					safeDisconnect("FPS")
-					local last = tick(); local frames = 0
-					Connections["FPS"] = RS.RenderStepped:Connect(function()
-						frames += 1
-						if tick() - last >= 0.5 then
-							local fps = math.floor(frames / (tick() - last) + 0.5)
-							fpsLabel.Text = "FPS: "..tostring(fps)
-							last = tick(); frames = 0
-						end
-					end)
-				else
-					t1.Text = "OFF"; t1.TextColor3 = TEXT_DIM; tweenColor(t1, {BackgroundColor3 = Color3.fromRGB(40,44,56)})
-					safeDisconnect("FPS")
-					fpsLabel.Text = "FPS: --"
-				end
-			end)
-		end)
-	end)
-
-	--// UTILITIES TAB ---------------------------------------------
-	createTab("Utilities", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc); list.Padding = UDim.new(0,8)
-
-		createHeader(sc, "Quality-of-Life")
-
-		local b1 = createButton(sc, "Anti-AFK (VirtualUser)")
-		b1.MouseButton1Click:Connect(function()
-			local vu = game:GetService("VirtualUser")
-			safeDisconnect("AntiAFK")
-			Connections["AntiAFK"] = LocalPlayer.Idled:Connect(function()
-				vu:CaptureController()
-				vu:ClickButton2(Vector2.new())
-			end)
-		end)
-
-		local b2 = createButton(sc, "Copy My Position (console)")
-		b2.MouseButton1Click:Connect(function()
-			if Character and Character.PrimaryPart then
-				print("SX Position:", Character.PrimaryPart.Position)
-			end
-		end)
-
-		local b3 = createButton(sc, "Reset All Toggles/FX")
-		b3.MouseButton1Click:Connect(function()
-			for k,_ in pairs(Connections) do safeDisconnect(k) end
-			-- remove FX
-			if Effects.Bloom then
-				if Effects.Bloom.Bloom then Effects.Bloom.Bloom:Destroy() end
-				if Effects.Bloom.CC then Effects.Bloom.CC:Destroy() end
-				Effects.Bloom = nil
-			end
-			if Effects.Night then
-				Lighting.Ambient   = Effects.Night.AmbientOld or Color3.new(0,0,0)
-				Lighting.Brightness= Effects.Night.BrightnessOld or 2
-				Effects.Night = nil
-			end
-			-- restore humanoid
-			withHumanoid(function()
-				Humanoid.WalkSpeed = DEFAULT_SPEED
-				Humanoid.JumpPower = DEFAULT_JUMP
-				Humanoid.Sit = false
-			end)
-			workspace.Gravity = 196.2
-		end)
-	end)
-
-	--// FUN TAB ----------------------------------------------------
-	createTab("Fun", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc); list.Padding = UDim.new(0,8)
-
-		createHeader(sc, "Goofs")
-		local b1 = createButton(sc, "Launch Upward")
-		b1.MouseButton1Click:Connect(function()
-			if Character and Character.PrimaryPart then
-				Character.PrimaryPart.Velocity = Vector3.new(0, 200, 0)
-			end
-		end)
-
-		local b2 = createButton(sc, "Dance (Animation)")
-		b2.MouseButton1Click:Connect(function()
-			withHumanoid(function()
-				local anim = Instance.new("Animation")
-				anim.AnimationId = "rbxassetid://507771019"
-				local track = Humanoid:LoadAnimation(anim)
-				track:Play()
-				task.delay(5, function()
-					pcall(function() track:Stop() end)
-				end)
-			end)
-		end)
-
-		local b3 = createButton(sc, "Ragdoll (Physics state)")
-		b3.MouseButton1Click:Connect(function()
-			withHumanoid(function()
-				Humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-				task.delay(2, function()
-					pcall(function()
-						Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-					end)
-				end)
-			end)
-		end)
-	end)
-
-	--// PRESETS TAB -----------------------------------------------
-	createTab("Presets", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc); list.Padding = UDim.new(0,8)
-
-		createHeader(sc, "Quick Profiles")
-		local p1 = createButton(sc, "Speedy • Walk 100 • Jump 100")
-		p1.MouseButton1Click:Connect(function()
-			withHumanoid(function()
-				Humanoid.WalkSpeed = 100
-				Humanoid.JumpPower = 100
-			end)
-		end)
-
-		local p2 = createButton(sc, "Moonwalk • Walk 50 • Jump 200 • Low Gravity")
-		p2.MouseButton1Click:Connect(function()
-			withHumanoid(function()
-				Humanoid.WalkSpeed = 50
-				Humanoid.JumpPower = 200
-			end)
-			workspace.Gravity = 98
-		end)
-
-		local p3 = createButton(sc, "Default • Reset All")
-		p3.MouseButton1Click:Connect(function()
-			for k,_ in pairs(Connections) do safeDisconnect(k) end
-			withHumanoid(function()
-				Humanoid.WalkSpeed = DEFAULT_SPEED
-				Humanoid.JumpPower = DEFAULT_JUMP
-				Humanoid.Sit = false
-			end)
-			workspace.Gravity = 196.2
-			-- lighting back
-			if Effects.Bloom then
-				if Effects.Bloom.Bloom then Effects.Bloom.Bloom:Destroy() end
-				if Effects.Bloom.CC then Effects.Bloom.CC:Destroy() end
-				Effects.Bloom = nil
-			end
-			if Effects.Night then
-				Lighting.Ambient   = Effects.Night.AmbientOld or Color3.new(0,0,0)
-				Lighting.Brightness= Effects.Night.BrightnessOld or 2
-				Effects.Night = nil
-			end
-		end)
-	end)
-
-	--// REMOTES TAB -----------------------------------------------
-	createTab("Remotes", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc); list.Padding = UDim.new(0,8)
-
-		if not RemoteEvent then
-			createHeader(sc, "RemoteEvent: ExploitTestEvent not found in ReplicatedStorage")
-			local b = createButton(sc, "Refresh (search again)")
-			b.MouseButton1Click:Connect(function()
-				RemoteEvent = ReplicatedStorage:FindFirstChild("ExploitTestEvent")
-				Tabs["Remotes"].Select(sc)
-			end)
-			return
-		end
-
-		createHeader(sc, "Remote: ExploitTestEvent")
-
-		local b1 = createButton(sc, "Fire 20x (TestPayload)")
-		b1.MouseButton1Click:Connect(function()
-			for i=1,20 do
-				pcall(function() RemoteEvent:FireServer("TestPayload", i) end)
-			end
-		end)
-
-		local b2 = createButton(sc, "Burst 50x")
-		b2.MouseButton1Click:Connect(function()
-			for i=1,50 do
-				pcall(function() RemoteEvent:FireServer("Burst", i) end)
-			end
-		end)
-
-		local b3 = createButton(sc, "Fire Single (Hello)")
-		b3.MouseButton1Click:Connect(function()
-			pcall(function() RemoteEvent:FireServer("HelloFromClient", LocalPlayer.Name) end)
-		end)
-	end)
-
-	-- Add About tab (small)
-	createTab("About", function(sc)
-		sc:ClearAllChildren()
-		local list = Instance.new("UIListLayout", sc); list.Padding = UDim.new(0,8)
-		createHeader(sc, "About / Help")
-		local info = Instance.new("TextLabel")
-		info.Size = UDim2.new(1, -12, 0, 120)
-		info.BackgroundColor3 = COLOR_CARD
-		info.TextColor3 = TEXT_MAIN
-		info.TextWrapped = true
-		info.TextXAlignment = Enum.TextXAlignment.Left
-		info.TextYAlignment = Enum.TextYAlignment.Top
-		info.Font = Enum.Font.Gotham
-		info.TextSize = 14
-		info.Text = "This is a local testing panel with a cyberpunk UI.\n• Works best in your own place.\n• First tab is auto-selected on open.\n• Mobile-friendly sizing and scrolling.\n• Many actions on OTHER players may not replicate on FE."
-		info.Parent = sc
-		makeCorner(info, 10)
-		makeStroke(info, NEON_PINK, 2)
-	end)
-
-	-- select first tab by default
-	task.defer(function()
-		if Tabs["Self"] then
-			Tabs["Self"].Button:Activate() -- visual
-			Tabs["Self"].Button.MouseButton1Click:Fire() -- ensure click event triggers
-		end
-	end)
-
-	-- loader behavior
-	loader.MouseButton1Click:Connect(function()
-		root.Visible = not root.Visible
-		loader.Text = root.Visible and "Close SX Panel" or "Open SX Panel"
-	end)
-
-	closeBtn.MouseButton1Click:Connect(function()
-		root.Visible = false
-		loader.Text = "Open SX Panel"
-	end)
-end
-
---// BUILD ONCE
-BuildPanel()
-
-print("[SX • Cyber Admin Panel] Ready.")
