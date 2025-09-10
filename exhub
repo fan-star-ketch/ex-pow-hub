@@ -1,10 +1,11 @@
--- ⚡ Auto GamePass Menu (One Big Script, PC + Mobile)
--- Place this script in ServerScriptService
+-- ⚡ Auto GamePass Menu (All-in-One)
+-- Put this in ServerScriptService
 
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 
--- RemoteEvent for passing data to clients
+-- RemoteEvent to send data to client
 local GamePassEvent = Instance.new("RemoteEvent")
 GamePassEvent.Name = "GamePassListEvent"
 GamePassEvent.Parent = ReplicatedStorage
@@ -12,9 +13,9 @@ GamePassEvent.Parent = ReplicatedStorage
 -- Universe ID for this game
 local universeId = game.GameId
 
--- Fetch passes function
+-- Function: fetch passes
 local function fetchGamepasses()
-	local url = "https://games.roblox.com/v1/games/"..universeId.."/game-passes?limit=100"
+	local url = "https://games.roblox.com/v1/games/" .. universeId .. "/game-passes?limit=100"
 	local success, result = pcall(function()
 		return HttpService:GetAsync(url)
 	end)
@@ -27,17 +28,16 @@ local function fetchGamepasses()
 	return {}
 end
 
--- Send passes when player joins
-game.Players.PlayerAdded:Connect(function(player)
+-- When player joins, send passes
+Players.PlayerAdded:Connect(function(player)
 	local passes = fetchGamepasses()
 	GamePassEvent:FireClient(player, passes)
 
-	-- Inject LocalScript into PlayerGui
-	player.CharacterAdded:Wait() -- wait until they load
-	local guiScript = Instance.new("LocalScript")
-	guiScript.Name = "GamePassMenuUI"
+	-- Inject LocalScript into PlayerGui for UI
+	local uiScript = Instance.new("LocalScript")
+	uiScript.Name = "GamePassMenuUI"
 
-	guiScript.Source = [[
+	uiScript.Source = [[
 		local Players = game:GetService("Players")
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local MarketplaceService = game:GetService("MarketplaceService")
@@ -57,9 +57,9 @@ game.Players.PlayerAdded:Connect(function(player)
 		screenGui.ResetOnSpawn = false
 		screenGui.Parent = player:WaitForChild("PlayerGui")
 
-		-- Frame
+		-- Frame (auto-resize for mobile/pc)
 		local frame = Instance.new("Frame")
-		frame.Size = UDim2.new(0, 320, 0, 420)
+		frame.Size = UDim2.new(0, 300, 0, 400)
 		frame.Position = UDim2.new(0.5, 0, 0.5, 0)
 		frame.AnchorPoint = Vector2.new(0.5, 0.5)
 		frame.BackgroundColor3 = darkBG
@@ -94,7 +94,7 @@ game.Players.PlayerAdded:Connect(function(player)
 		minimizeBtn.TextColor3 = neonBlue
 		Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0, 6)
 
-		-- Scroll frame
+		-- ScrollFrame
 		local scrollFrame = Instance.new("ScrollingFrame", frame)
 		scrollFrame.Size = UDim2.new(1, -20, 1, -60)
 		scrollFrame.Position = UDim2.new(0, 10, 0, 50)
@@ -105,7 +105,7 @@ game.Players.PlayerAdded:Connect(function(player)
 		local listLayout = Instance.new("UIListLayout", scrollFrame)
 		listLayout.Padding = UDim.new(0, 8)
 
-		-- Function to build pass button
+		-- Function: make pass button
 		local function makePassButton(passInfo)
 			local btn = Instance.new("TextButton")
 			btn.Size = UDim2.new(1, -10, 0, 70)
@@ -123,7 +123,7 @@ game.Players.PlayerAdded:Connect(function(player)
 			icon.Size = UDim2.new(0, 60, 0, 60)
 			icon.Position = UDim2.new(0, 5, 0.5, -30)
 			icon.BackgroundTransparency = 1
-			icon.Image = "rbxassetid://"..passInfo.iconImageAssetId
+			icon.Image = "rbxassetid://"..tostring(passInfo.iconImageAssetId or 0)
 
 			-- Name
 			local nameLabel = Instance.new("TextLabel", btn)
@@ -131,7 +131,7 @@ game.Players.PlayerAdded:Connect(function(player)
 			nameLabel.Position = UDim2.new(0, 75, 0, 10)
 			nameLabel.BackgroundTransparency = 1
 			nameLabel.Font = Enum.Font.GothamBold
-			nameLabel.Text = passInfo.name
+			nameLabel.Text = passInfo.name or "Unknown"
 			nameLabel.TextColor3 = neonBlue
 			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 			nameLabel.TextSize = 16
@@ -147,14 +147,13 @@ game.Players.PlayerAdded:Connect(function(player)
 			priceLabel.TextXAlignment = Enum.TextXAlignment.Left
 			priceLabel.TextSize = 14
 
-			-- Hover (PC) + click to buy
+			-- Hover + click to buy
 			btn.MouseEnter:Connect(function()
 				TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = neonPink}):Play()
 			end)
 			btn.MouseLeave:Connect(function()
 				TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(25, 25, 35)}):Play()
 			end)
-
 			btn.MouseButton1Click:Connect(function()
 				MarketplaceService:PromptGamePassPurchase(player, passInfo.id)
 			end)
@@ -166,11 +165,11 @@ game.Players.PlayerAdded:Connect(function(player)
 			minimized = not minimized
 			if minimized then
 				scrollFrame.Visible = false
-				frame.Size = UDim2.new(0, 320, 0, 50)
+				frame.Size = UDim2.new(0, 300, 0, 50)
 				minimizeBtn.Text = "+"
 			else
 				scrollFrame.Visible = true
-				frame.Size = UDim2.new(0, 320, 0, 420)
+				frame.Size = UDim2.new(0, 300, 0, 400)
 				minimizeBtn.Text = "-"
 			end
 		end)
@@ -184,6 +183,5 @@ game.Players.PlayerAdded:Connect(function(player)
 		end)
 	]]
 
-	guiScript.Parent = player:WaitForChild("PlayerGui")
+	uiScript.Parent = player:WaitForChild("PlayerGui")
 end)
-
