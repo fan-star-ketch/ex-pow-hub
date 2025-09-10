@@ -1,171 +1,189 @@
--- ⚡ SX Gamepass Panel (Draggable / Scrollable / Minimizeable)
--- Place this LocalScript in StarterGui
+-- ⚡ Auto GamePass Menu (One Big Script, PC + Mobile)
+-- Place this script in ServerScriptService
 
-local Players = game:GetService("Players")
-local MarketplaceService = game:GetService("MarketplaceService")
-local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local player = Players.LocalPlayer
+-- RemoteEvent for passing data to clients
+local GamePassEvent = Instance.new("RemoteEvent")
+GamePassEvent.Name = "GamePassListEvent"
+GamePassEvent.Parent = ReplicatedStorage
 
--- 🟢 Add your gamepass IDs here (from Creator Dashboard)
-local gamepasses = {
-    1378023526
-}
+-- Universe ID for this game
+local universeId = game.GameId
 
--- Colors
-local neonBlue = Color3.fromRGB(0, 255, 255)
-local neonPink = Color3.fromRGB(255, 0, 128)
-local darkBG = Color3.fromRGB(15, 15, 20)
-
--- ScreenGui
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "SX_GamepassPanel"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = player:WaitForChild("PlayerGui")
-
--- Main Frame
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 380, 0, 450)
-mainFrame.Position = UDim2.new(0.5, -190, 0.4, -225)
-mainFrame.BackgroundColor3 = darkBG
-mainFrame.Active = true
-mainFrame.Draggable = true
-mainFrame.Parent = screenGui
-
-local corner = Instance.new("UICorner", mainFrame)
-corner.CornerRadius = UDim.new(0, 12)
-
-local stroke = Instance.new("UIStroke", mainFrame)
-stroke.Thickness = 3
-stroke.Color = neonBlue
-
--- Title Bar
-local titleBar = Instance.new("TextLabel")
-titleBar.Size = UDim2.new(1, -40, 0, 40)
-titleBar.Position = UDim2.new(0, 10, 0, 5)
-titleBar.BackgroundTransparency = 1
-titleBar.Text = "⚡ Gamepasses ⚡"
-titleBar.Font = Enum.Font.GothamBold
-titleBar.TextSize = 20
-titleBar.TextColor3 = neonPink
-titleBar.Parent = mainFrame
-
--- Minimize Button
-local minimizeBtn = Instance.new("TextButton")
-minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
-minimizeBtn.Position = UDim2.new(1, -35, 0, 5)
-minimizeBtn.BackgroundColor3 = neonPink
-minimizeBtn.Text = "-"
-minimizeBtn.Font = Enum.Font.GothamBold
-minimizeBtn.TextSize = 20
-minimizeBtn.TextColor3 = Color3.new(1,1,1)
-minimizeBtn.Parent = mainFrame
-local btnCorner = Instance.new("UICorner", minimizeBtn)
-btnCorner.CornerRadius = UDim.new(0, 8)
-
--- Scrolling Frame
-local scrollFrame = Instance.new("ScrollingFrame", mainFrame)
-scrollFrame.Size = UDim2.new(1, -20, 1, -60)
-scrollFrame.Position = UDim2.new(0, 10, 0, 50)
-scrollFrame.BackgroundTransparency = 1
-scrollFrame.ScrollBarThickness = 6
-scrollFrame.CanvasSize = UDim2.new(0,0,0,0)
-
-local listLayout = Instance.new("UIListLayout", scrollFrame)
-listLayout.Padding = UDim.new(0, 8)
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- Auto resize scroll
-listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
-end)
-
--- Function to create gamepass button
-local function makePassButton(passInfo)
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, -10, 0, 70)
-	btn.BackgroundColor3 = darkBG
-	btn.Text = ""
-	btn.AutoButtonColor = false
-
-	local bc = Instance.new("UICorner", btn)
-	bc.CornerRadius = UDim.new(0, 10)
-
-	local bs = Instance.new("UIStroke", btn)
-	bs.Thickness = 2
-	bs.Color = neonPink
-
-	-- Icon
-	local icon = Instance.new("ImageLabel", btn)
-	icon.Size = UDim2.new(0, 60, 0, 60)
-	icon.Position = UDim2.new(0, 5, 0.5, -30)
-	icon.BackgroundTransparency = 1
-	icon.Image = "rbxassetid://"..passInfo.IconImageAssetId
-
-	-- Name
-	local nameLabel = Instance.new("TextLabel", btn)
-	nameLabel.Size = UDim2.new(1, -80, 0, 30)
-	nameLabel.Position = UDim2.new(0, 75, 0, 10)
-	nameLabel.BackgroundTransparency = 1
-	nameLabel.Font = Enum.Font.GothamBold
-	nameLabel.Text = passInfo.Name
-	nameLabel.TextColor3 = neonBlue
-	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-	nameLabel.TextSize = 16
-
-	-- Price
-	local priceLabel = Instance.new("TextLabel", btn)
-	priceLabel.Size = UDim2.new(1, -80, 0, 20)
-	priceLabel.Position = UDim2.new(0, 75, 0, 40)
-	priceLabel.BackgroundTransparency = 1
-	priceLabel.Font = Enum.Font.Gotham
-	priceLabel.Text = tostring(passInfo.PriceInRobux).." R$"
-	priceLabel.TextColor3 = neonPink
-	priceLabel.TextXAlignment = Enum.TextXAlignment.Left
-	priceLabel.TextSize = 14
-
-	-- Hover effect
-	btn.MouseEnter:Connect(function()
-		TweenService:Create(bs, TweenInfo.new(0.2), {Color = neonBlue}):Play()
+-- Fetch passes function
+local function fetchGamepasses()
+	local url = "https://games.roblox.com/v1/games/"..universeId.."/game-passes?limit=100"
+	local success, result = pcall(function()
+		return HttpService:GetAsync(url)
 	end)
-	btn.MouseLeave:Connect(function()
-		TweenService:Create(bs, TweenInfo.new(0.2), {Color = neonPink}):Play()
-	end)
-
-	-- Click → Prompt purchase
-	btn.MouseButton1Click:Connect(function()
-		MarketplaceService:PromptGamePassPurchase(player, passInfo.AssetId)
-	end)
-
-	btn.Parent = scrollFrame
+	if success then
+		local data = HttpService:JSONDecode(result)
+		if data and data.data then
+			return data.data
+		end
+	end
+	return {}
 end
 
--- Load gamepasses
-for _,id in ipairs(gamepasses) do
-	local info
-	pcall(function()
-		info = MarketplaceService:GetProductInfo(id, Enum.InfoType.GamePass)
-	end)
-	if info then
-		makePassButton(info)
-	end
-end
+-- Send passes when player joins
+game.Players.PlayerAdded:Connect(function(player)
+	local passes = fetchGamepasses()
+	GamePassEvent:FireClient(player, passes)
 
--- Minimize toggle
-local minimized = false
-minimizeBtn.MouseButton1Click:Connect(function()
-	minimized = not minimized
-	if minimized then
-		TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 200, 0, 50)}):Play()
-		scrollFrame.Visible = false
-		titleBar.Text = "⚡ Passes (Minimized)"
-	else
-		TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 380, 0, 450)}):Play()
-		task.wait(0.3)
-		scrollFrame.Visible = true
-		titleBar.Text = "⚡ Gamepasses ⚡"
-	end
+	-- Inject LocalScript into PlayerGui
+	player.CharacterAdded:Wait() -- wait until they load
+	local guiScript = Instance.new("LocalScript")
+	guiScript.Name = "GamePassMenuUI"
+
+	guiScript.Source = [[
+		local Players = game:GetService("Players")
+		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local MarketplaceService = game:GetService("MarketplaceService")
+		local TweenService = game:GetService("TweenService")
+
+		local player = Players.LocalPlayer
+		local event = ReplicatedStorage:WaitForChild("GamePassListEvent")
+
+		-- Colors
+		local neonBlue = Color3.fromRGB(0, 255, 255)
+		local neonPink = Color3.fromRGB(255, 0, 128)
+		local darkBG = Color3.fromRGB(15, 15, 20)
+
+		-- ScreenGui
+		local screenGui = Instance.new("ScreenGui")
+		screenGui.Name = "GamePassMenu"
+		screenGui.ResetOnSpawn = false
+		screenGui.Parent = player:WaitForChild("PlayerGui")
+
+		-- Frame
+		local frame = Instance.new("Frame")
+		frame.Size = UDim2.new(0, 320, 0, 420)
+		frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+		frame.AnchorPoint = Vector2.new(0.5, 0.5)
+		frame.BackgroundColor3 = darkBG
+		frame.Active = true
+		frame.Draggable = true
+		frame.Parent = screenGui
+
+		Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+		local stroke = Instance.new("UIStroke", frame)
+		stroke.Thickness = 3
+		stroke.Color = neonBlue
+
+		-- Title
+		local title = Instance.new("TextLabel", frame)
+		title.Size = UDim2.new(1, -40, 0, 40)
+		title.Position = UDim2.new(0, 10, 0, 0)
+		title.BackgroundTransparency = 1
+		title.Font = Enum.Font.GothamBold
+		title.TextSize = 18
+		title.TextColor3 = neonPink
+		title.Text = "⚡ GamePasses ⚡"
+		title.TextXAlignment = Enum.TextXAlignment.Center
+
+		-- Minimize button
+		local minimizeBtn = Instance.new("TextButton", frame)
+		minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+		minimizeBtn.Position = UDim2.new(1, -35, 0, 5)
+		minimizeBtn.BackgroundColor3 = darkBG
+		minimizeBtn.Text = "-"
+		minimizeBtn.Font = Enum.Font.GothamBold
+		minimizeBtn.TextSize = 20
+		minimizeBtn.TextColor3 = neonBlue
+		Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0, 6)
+
+		-- Scroll frame
+		local scrollFrame = Instance.new("ScrollingFrame", frame)
+		scrollFrame.Size = UDim2.new(1, -20, 1, -60)
+		scrollFrame.Position = UDim2.new(0, 10, 0, 50)
+		scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+		scrollFrame.ScrollBarThickness = 6
+		scrollFrame.BackgroundTransparency = 1
+
+		local listLayout = Instance.new("UIListLayout", scrollFrame)
+		listLayout.Padding = UDim.new(0, 8)
+
+		-- Function to build pass button
+		local function makePassButton(passInfo)
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, -10, 0, 70)
+			btn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+			btn.Text = ""
+			btn.Parent = scrollFrame
+
+			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+			local glow = Instance.new("UIStroke", btn)
+			glow.Thickness = 2
+			glow.Color = neonPink
+
+			-- Icon
+			local icon = Instance.new("ImageLabel", btn)
+			icon.Size = UDim2.new(0, 60, 0, 60)
+			icon.Position = UDim2.new(0, 5, 0.5, -30)
+			icon.BackgroundTransparency = 1
+			icon.Image = "rbxassetid://"..passInfo.iconImageAssetId
+
+			-- Name
+			local nameLabel = Instance.new("TextLabel", btn)
+			nameLabel.Size = UDim2.new(1, -80, 0, 30)
+			nameLabel.Position = UDim2.new(0, 75, 0, 10)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Font = Enum.Font.GothamBold
+			nameLabel.Text = passInfo.name
+			nameLabel.TextColor3 = neonBlue
+			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+			nameLabel.TextSize = 16
+
+			-- Price
+			local priceLabel = Instance.new("TextLabel", btn)
+			priceLabel.Size = UDim2.new(1, -80, 0, 20)
+			priceLabel.Position = UDim2.new(0, 75, 0, 40)
+			priceLabel.BackgroundTransparency = 1
+			priceLabel.Font = Enum.Font.Gotham
+			priceLabel.Text = tostring(passInfo.price or "?").." R$"
+			priceLabel.TextColor3 = neonPink
+			priceLabel.TextXAlignment = Enum.TextXAlignment.Left
+			priceLabel.TextSize = 14
+
+			-- Hover (PC) + click to buy
+			btn.MouseEnter:Connect(function()
+				TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = neonPink}):Play()
+			end)
+			btn.MouseLeave:Connect(function()
+				TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(25, 25, 35)}):Play()
+			end)
+
+			btn.MouseButton1Click:Connect(function()
+				MarketplaceService:PromptGamePassPurchase(player, passInfo.id)
+			end)
+		end
+
+		-- Minimize logic
+		local minimized = false
+		minimizeBtn.MouseButton1Click:Connect(function()
+			minimized = not minimized
+			if minimized then
+				scrollFrame.Visible = false
+				frame.Size = UDim2.new(0, 320, 0, 50)
+				minimizeBtn.Text = "+"
+			else
+				scrollFrame.Visible = true
+				frame.Size = UDim2.new(0, 320, 0, 420)
+				minimizeBtn.Text = "-"
+			end
+		end)
+
+		-- Receive passes
+		event.OnClientEvent:Connect(function(passes)
+			for _, pass in ipairs(passes) do
+				makePassButton(pass)
+			end
+			scrollFrame.CanvasSize = UDim2.new(0, 0, 0, #passes * 80)
+		end)
+	]]
+
+	guiScript.Parent = player:WaitForChild("PlayerGui")
 end)
-
-print("[SX Gamepass Panel Loaded ✅]")
 
