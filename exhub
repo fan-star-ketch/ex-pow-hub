@@ -1,26 +1,26 @@
--- ⚡ Auto GamePass Menu (All-in-One)
--- Put this in ServerScriptService
+-- ⚡ Auto GamePass Menu (PC + Mobile Friendly)
+-- Place in ServerScriptService
 
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
--- RemoteEvent to send data to client
+-- RemoteEvent for passes
 local GamePassEvent = Instance.new("RemoteEvent")
 GamePassEvent.Name = "GamePassListEvent"
 GamePassEvent.Parent = ReplicatedStorage
 
--- Universe ID for this game
+-- Universe ID
 local universeId = game.GameId
 
--- Function: fetch passes
+-- Fetch passes
 local function fetchGamepasses()
-	local url = "https://games.roblox.com/v1/games/" .. universeId .. "/game-passes?limit=100"
-	local success, result = pcall(function()
+	local url = "https://games.roblox.com/v1/games/"..universeId.."/game-passes?limit=100"
+	local ok, res = pcall(function()
 		return HttpService:GetAsync(url)
 	end)
-	if success then
-		local data = HttpService:JSONDecode(result)
+	if ok then
+		local data = HttpService:JSONDecode(res)
 		if data and data.data then
 			return data.data
 		end
@@ -28,44 +28,42 @@ local function fetchGamepasses()
 	return {}
 end
 
--- When player joins, send passes
+-- Player added
 Players.PlayerAdded:Connect(function(player)
 	local passes = fetchGamepasses()
 	GamePassEvent:FireClient(player, passes)
 
-	-- Inject LocalScript into PlayerGui for UI
-	local uiScript = Instance.new("LocalScript")
-	uiScript.Name = "GamePassMenuUI"
-
-	uiScript.Source = [[
+	local ui = Instance.new("LocalScript")
+	ui.Name = "GamePassMenuUI"
+	ui.Source = [[
 		local Players = game:GetService("Players")
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local MarketplaceService = game:GetService("MarketplaceService")
 		local TweenService = game:GetService("TweenService")
+		local UIS = game:GetService("UserInputService")
 
 		local player = Players.LocalPlayer
 		local event = ReplicatedStorage:WaitForChild("GamePassListEvent")
 
 		-- Colors
-		local neonBlue = Color3.fromRGB(0, 255, 255)
-		local neonPink = Color3.fromRGB(255, 0, 128)
-		local darkBG = Color3.fromRGB(15, 15, 20)
+		local neonBlue = Color3.fromRGB(0,255,255)
+		local neonPink = Color3.fromRGB(255,0,128)
+		local darkBG = Color3.fromRGB(15,15,20)
 
-		-- ScreenGui
-		local screenGui = Instance.new("ScreenGui")
-		screenGui.Name = "GamePassMenu"
-		screenGui.ResetOnSpawn = false
-		screenGui.Parent = player:WaitForChild("PlayerGui")
+		-- Gui
+		local gui = Instance.new("ScreenGui")
+		gui.Name = "GamePassMenu"
+		gui.ResetOnSpawn = false
+		gui.Parent = player:WaitForChild("PlayerGui")
 
-		-- Frame (auto-resize for mobile/pc)
+		-- Main frame (scaled for device)
 		local frame = Instance.new("Frame")
-		frame.Size = UDim2.new(0, 300, 0, 400)
+		frame.Size = UDim2.new(0.7, 0, 0.6, 0) -- % of screen so it fits mobile
 		frame.Position = UDim2.new(0.5, 0, 0.5, 0)
 		frame.AnchorPoint = Vector2.new(0.5, 0.5)
 		frame.BackgroundColor3 = darkBG
 		frame.Active = true
-		frame.Draggable = true
-		frame.Parent = screenGui
+		frame.Parent = gui
 
 		Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
 		local stroke = Instance.new("UIStroke", frame)
@@ -81,107 +79,128 @@ Players.PlayerAdded:Connect(function(player)
 		title.TextSize = 18
 		title.TextColor3 = neonPink
 		title.Text = "⚡ GamePasses ⚡"
-		title.TextXAlignment = Enum.TextXAlignment.Center
 
 		-- Minimize button
-		local minimizeBtn = Instance.new("TextButton", frame)
-		minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
-		minimizeBtn.Position = UDim2.new(1, -35, 0, 5)
-		minimizeBtn.BackgroundColor3 = darkBG
-		minimizeBtn.Text = "-"
-		minimizeBtn.Font = Enum.Font.GothamBold
-		minimizeBtn.TextSize = 20
-		minimizeBtn.TextColor3 = neonBlue
-		Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0, 6)
+		local minBtn = Instance.new("TextButton", frame)
+		minBtn.Size = UDim2.new(0, 30, 0, 30)
+		minBtn.Position = UDim2.new(1, -35, 0, 5)
+		minBtn.BackgroundColor3 = darkBG
+		minBtn.Text = "-"
+		minBtn.Font = Enum.Font.GothamBold
+		minBtn.TextSize = 20
+		minBtn.TextColor3 = neonBlue
+		Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
 
 		-- ScrollFrame
-		local scrollFrame = Instance.new("ScrollingFrame", frame)
-		scrollFrame.Size = UDim2.new(1, -20, 1, -60)
-		scrollFrame.Position = UDim2.new(0, 10, 0, 50)
-		scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-		scrollFrame.ScrollBarThickness = 6
-		scrollFrame.BackgroundTransparency = 1
+		local scroll = Instance.new("ScrollingFrame", frame)
+		scroll.Size = UDim2.new(1, -20, 1, -60)
+		scroll.Position = UDim2.new(0, 10, 0, 50)
+		scroll.CanvasSize = UDim2.new(0,0,0,0)
+		scroll.ScrollBarThickness = 6
+		scroll.BackgroundTransparency = 1
+		local layout = Instance.new("UIListLayout", scroll)
+		layout.Padding = UDim.new(0,8)
 
-		local listLayout = Instance.new("UIListLayout", scrollFrame)
-		listLayout.Padding = UDim.new(0, 8)
-
-		-- Function: make pass button
-		local function makePassButton(passInfo)
+		-- Build pass button
+		local function makeButton(info)
 			local btn = Instance.new("TextButton")
 			btn.Size = UDim2.new(1, -10, 0, 70)
-			btn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+			btn.BackgroundColor3 = Color3.fromRGB(25,25,35)
 			btn.Text = ""
-			btn.Parent = scrollFrame
-
+			btn.Parent = scroll
 			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
 			local glow = Instance.new("UIStroke", btn)
 			glow.Thickness = 2
 			glow.Color = neonPink
 
-			-- Icon
 			local icon = Instance.new("ImageLabel", btn)
-			icon.Size = UDim2.new(0, 60, 0, 60)
-			icon.Position = UDim2.new(0, 5, 0.5, -30)
+			icon.Size = UDim2.new(0,60,0,60)
+			icon.Position = UDim2.new(0,5,0.5,-30)
 			icon.BackgroundTransparency = 1
-			icon.Image = "rbxassetid://"..tostring(passInfo.iconImageAssetId or 0)
+			icon.Image = "rbxassetid://"..tostring(info.iconImageAssetId or 0)
 
-			-- Name
-			local nameLabel = Instance.new("TextLabel", btn)
-			nameLabel.Size = UDim2.new(1, -80, 0, 30)
-			nameLabel.Position = UDim2.new(0, 75, 0, 10)
-			nameLabel.BackgroundTransparency = 1
-			nameLabel.Font = Enum.Font.GothamBold
-			nameLabel.Text = passInfo.name or "Unknown"
-			nameLabel.TextColor3 = neonBlue
-			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-			nameLabel.TextSize = 16
+			local name = Instance.new("TextLabel", btn)
+			name.Size = UDim2.new(1, -80, 0, 30)
+			name.Position = UDim2.new(0,75,0,10)
+			name.BackgroundTransparency = 1
+			name.Font = Enum.Font.GothamBold
+			name.Text = info.name or "Unknown"
+			name.TextColor3 = neonBlue
+			name.TextXAlignment = Enum.TextXAlignment.Left
+			name.TextSize = 16
 
-			-- Price
-			local priceLabel = Instance.new("TextLabel", btn)
-			priceLabel.Size = UDim2.new(1, -80, 0, 20)
-			priceLabel.Position = UDim2.new(0, 75, 0, 40)
-			priceLabel.BackgroundTransparency = 1
-			priceLabel.Font = Enum.Font.Gotham
-			priceLabel.Text = tostring(passInfo.price or "?").." R$"
-			priceLabel.TextColor3 = neonPink
-			priceLabel.TextXAlignment = Enum.TextXAlignment.Left
-			priceLabel.TextSize = 14
+			local price = Instance.new("TextLabel", btn)
+			price.Size = UDim2.new(1, -80, 0, 20)
+			price.Position = UDim2.new(0,75,0,40)
+			price.BackgroundTransparency = 1
+			price.Font = Enum.Font.Gotham
+			price.Text = tostring(info.price or "?").." R$"
+			price.TextColor3 = neonPink
+			price.TextXAlignment = Enum.TextXAlignment.Left
+			price.TextSize = 14
 
-			-- Hover + click to buy
+			btn.MouseButton1Click:Connect(function()
+				game:GetService("MarketplaceService"):PromptGamePassPurchase(player, info.id)
+			end)
 			btn.MouseEnter:Connect(function()
-				TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = neonPink}):Play()
+				if not UIS.TouchEnabled then
+					TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = neonPink}):Play()
+				end
 			end)
 			btn.MouseLeave:Connect(function()
-				TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(25, 25, 35)}):Play()
-			end)
-			btn.MouseButton1Click:Connect(function()
-				MarketplaceService:PromptGamePassPurchase(player, passInfo.id)
+				if not UIS.TouchEnabled then
+					TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(25,25,35)}):Play()
+				end
 			end)
 		end
 
-		-- Minimize logic
+		-- Minimize
 		local minimized = false
-		minimizeBtn.MouseButton1Click:Connect(function()
+		minBtn.MouseButton1Click:Connect(function()
 			minimized = not minimized
 			if minimized then
-				scrollFrame.Visible = false
-				frame.Size = UDim2.new(0, 300, 0, 50)
-				minimizeBtn.Text = "+"
+				scroll.Visible = false
+				frame.Size = UDim2.new(0.3,0,0.1,0)
+				minBtn.Text = "+"
 			else
-				scrollFrame.Visible = true
-				frame.Size = UDim2.new(0, 300, 0, 400)
-				minimizeBtn.Text = "-"
+				scroll.Visible = true
+				frame.Size = UDim2.new(0.7,0,0.6,0)
+				minBtn.Text = "-"
 			end
 		end)
 
-		-- Receive passes
-		event.OnClientEvent:Connect(function(passes)
-			for _, pass in ipairs(passes) do
-				makePassButton(pass)
+		-- Drag support (works for touch & mouse)
+		local dragging, dragStart, startPos
+		local function update(input)
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+									   startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+		frame.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				dragStart = input.Position
+				startPos = frame.Position
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						dragging = false
+					end
+				end)
 			end
-			scrollFrame.CanvasSize = UDim2.new(0, 0, 0, #passes * 80)
+		end)
+		UIS.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				update(input)
+			end
+		end)
+
+		-- Load passes
+		event.OnClientEvent:Connect(function(passes)
+			for _,p in ipairs(passes) do
+				makeButton(p)
+			end
+			scroll.CanvasSize = UDim2.new(0,0,0,#passes*80)
 		end)
 	]]
-
-	uiScript.Parent = player:WaitForChild("PlayerGui")
+	ui.Parent = player:WaitForChild("PlayerGui")
 end)
