@@ -1,23 +1,22 @@
--- FULL CUSTOM MENU (Mobile + Desktop Ready, Console-Friendly)
+-- FULL MOBILE-FRIENDLY CUSTOM MENU
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
--- Ensure LocalPlayer exists
 local player = Players.LocalPlayer
-while not player do task.wait() player = Players.LocalPlayer end
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ---------- GUI SETUP ----------
+-- ---------- GUI ----------
 local gui = Instance.new("ScreenGui")
 gui.Name = "CustomMenu"
-gui.ResetOnSpawn = true -- mobile-friendly
+gui.ResetOnSpawn = true
 gui.Parent = playerGui
 gui.Enabled = true
 
+-- Main frame
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 340, 0, 480)
-frame.Position = UDim2.new(0.5, -170, 0.5, -240)
+frame.Size = UDim2.new(0, 300, 0, 400)
+frame.Position = UDim2.new(0.5, 0, 0.5, 0)
 frame.AnchorPoint = Vector2.new(0.5,0.5)
 frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
 frame.BorderSizePixel = 0
@@ -51,9 +50,11 @@ closeBtn.TextColor3 = Color3.new(1,1,1)
 closeBtn.TextSize = 16
 closeBtn.Font = Enum.Font.GothamBold
 closeBtn.Parent = titleBar
-closeBtn.MouseButton1Click:Connect(function() gui.Enabled = not gui.Enabled end)
+closeBtn.MouseButton1Click:Connect(function()
+    gui.Enabled = not gui.Enabled
+end)
 
--- Content frame
+-- Content scroll
 local contentFrame = Instance.new("Frame")
 contentFrame.Size = UDim2.new(1,0,1,-46)
 contentFrame.Position = UDim2.new(0,0,0,46)
@@ -61,11 +62,11 @@ contentFrame.BackgroundTransparency = 1
 contentFrame.Parent = frame
 
 local scrolling = Instance.new("ScrollingFrame")
-scrolling.Size = UDim2.new(1,-24,1,0)
-scrolling.Position = UDim2.new(0,12,0,0)
-scrolling.ScrollBarThickness = 8
+scrolling.Size = UDim2.new(1,-20,1,0)
+scrolling.Position = UDim2.new(0,10,0,0)
 scrolling.BackgroundColor3 = Color3.fromRGB(36,36,36)
 scrolling.BorderSizePixel = 0
+scrolling.ScrollBarThickness = 8
 scrolling.AutomaticCanvasSize = Enum.AutomaticSize.Y
 scrolling.Parent = contentFrame
 
@@ -74,41 +75,36 @@ uiList.SortOrder = Enum.SortOrder.LayoutOrder
 uiList.Padding = UDim.new(0,8)
 uiList.Parent = scrolling
 
--- ---------- DRAGGING (Mobile & Desktop) ----------
+-- ---------- DRAG ----------
 local dragging = false
 local dragStart = Vector3.new()
 local startPos = UDim2.new()
-local function onInputBegan(input)
+titleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        if input.Target:IsDescendantOf(titleBar) then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
-            end)
-        end
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
     end
-end
-local function onInputChanged(input)
+end)
+UserInputService.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         local newX = startPos.X.Offset + delta.X
         local newY = startPos.Y.Offset + delta.Y
-        local screenSize = workspace.CurrentCamera.ViewportSize
-        newX = math.clamp(newX, -frame.AbsoluteSize.X/2, screenSize.X - frame.AbsoluteSize.X/2)
-        newY = math.clamp(newY, -frame.AbsoluteSize.Y/2, screenSize.Y - frame.AbsoluteSize.Y/2)
-        frame.Position = UDim2.new(0,newX,0,newY)
+        local screen = workspace.CurrentCamera.ViewportSize
+        newX = math.clamp(newX, 0, screen.X - frame.AbsoluteSize.X)
+        newY = math.clamp(newY, 0, screen.Y - frame.AbsoluteSize.Y)
+        frame.Position = UDim2.new(0, newX, 0, newY)
     end
-end
-titleBar.InputBegan:Connect(onInputBegan)
-UserInputService.InputChanged:Connect(onInputChanged)
-UserInputService.InputBegan:Connect(onInputBegan)
+end)
 
 -- ---------- TELEPORT + ESP ----------
 local TeleportAndESP_Enabled = false
 local ESP_GUIs = {}
-local function createESPForCharacter(p)
+local function createESP(p)
     if p == player then return end
     local char = p.Character
     if not char then return end
@@ -122,8 +118,8 @@ local function createESPForCharacter(p)
     guiBill.AlwaysOnTop = true
     guiBill.Parent = head
     local label = Instance.new("TextLabel")
-    label.BackgroundTransparency = 1
     label.Size = UDim2.new(1,0,1,0)
+    label.BackgroundTransparency = 1
     label.Font = Enum.Font.GothamBold
     label.TextSize = 14
     label.TextColor3 = Color3.fromRGB(255,50,50)
@@ -131,71 +127,72 @@ local function createESPForCharacter(p)
     label.Parent = guiBill
     ESP_GUIs[p] = guiBill
 end
-local function removeAllESP()
+local function removeESP()
     for _,g in pairs(ESP_GUIs) do if g and g.Parent then g:Destroy() end end
     ESP_GUIs = {}
 end
-local function enableESPForAll()
+local function enableESP()
     for _,p in pairs(Players:GetPlayers()) do
-        if p.Character then createESPForCharacter(p) end
-        p.CharacterAdded:Connect(createESPForCharacter)
+        if p.Character then createESP(p) end
+        p.CharacterAdded:Connect(createESP)
     end
-    Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(createESPForCharacter) end)
+    Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(createESP) end)
 end
-local function teleportToBase()
+local function teleportBase()
     local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate") or workspace:FindFirstChildOfClass("SpawnLocation")
     if not base then return end
     local char = player.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
     if not root then return end
-    root.CFrame = CFrame.new(base.Position.X, base.Position.Y + (base.Size.Y/2)+6, base.Position.Z)
+    root.CFrame = CFrame.new(base.Position.X, base.Position.Y + base.Size.Y/2 + 5, base.Position.Z)
 end
 
--- Toggle button
+-- ---------- BUTTONS ----------
 local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(1,0,0,42)
+toggleBtn.Size = UDim2.new(1,0,0,40)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(68,68,255)
 toggleBtn.Text = "Enable Teleport + ESP"
 toggleBtn.TextColor3 = Color3.new(1,1,1)
-toggleBtn.TextSize = 16
 toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 16
 toggleBtn.LayoutOrder = 1
 toggleBtn.Parent = scrolling
 
 toggleBtn.MouseButton1Click:Connect(function()
     TeleportAndESP_Enabled = not TeleportAndESP_Enabled
     if TeleportAndESP_Enabled then
-        teleportToBase()
-        enableESPForAll()
+        teleportBase()
+        enableESP()
         toggleBtn.Text = "Disable Teleport + ESP"
         toggleBtn.BackgroundColor3 = Color3.fromRGB(80,220,90)
     else
-        removeAllESP()
+        removeESP()
         toggleBtn.Text = "Enable Teleport + ESP"
         toggleBtn.BackgroundColor3 = Color3.fromRGB(68,68,255)
     end
 end)
 
--- ---------- GUI TOGGLE ----------
-local function ToggleGUI() gui.Enabled = not gui.Enabled end
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.KeyCode == Enum.KeyCode.Backquote or input.KeyCode == Enum.KeyCode.RightControl then
-        ToggleGUI()
-    end
-end)
-player.Chatted:Connect(function(msg)
-    if msg:lower() == "/menu" or msg:lower() == "!menu" then ToggleGUI() end
-end)
+-- Optional: example extra buttons
+for i=2,8 do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1,0,0,36)
+    b.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    b.TextColor3 = Color3.new(1,1,1)
+    b.Font = Enum.Font.Gotham
+    b.TextSize = 14
+    b.Text = "Button "..i
+    b.LayoutOrder = i
+    b.Parent = scrolling
+end
 
--- Keep frame inside viewport
+-- Keep inside viewport
 RunService.RenderStepped:Connect(function()
-    local camSize = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(0,0)
+    local screen = workspace.CurrentCamera.ViewportSize
     frame.Position = UDim2.new(0,
-        math.clamp(frame.Position.X.Offset, -frame.AbsoluteSize.X/2, camSize.X - frame.AbsoluteSize.X/2),
+        math.clamp(frame.Position.X.Offset,0,screen.X - frame.AbsoluteSize.X),
         0,
-        math.clamp(frame.Position.Y.Offset, -frame.AbsoluteSize.Y/2, camSize.Y - frame.AbsoluteSize.Y/2))
+        math.clamp(frame.Position.Y.Offset,0,screen.Y - frame.AbsoluteSize.Y))
 end)
 
-print("CustomMenu fully loaded for player:", player.Name)
+print("CustomMenu fully loaded for:", player.Name)
