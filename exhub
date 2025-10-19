@@ -1,206 +1,168 @@
--- ⚡ Auto GamePass Menu (PC + Mobile Friendly)
--- Place in ServerScriptService
-
-local HttpService = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
--- RemoteEvent for passes
-local GamePassEvent = Instance.new("RemoteEvent")
-GamePassEvent.Name = "GamePassListEvent"
-GamePassEvent.Parent = ReplicatedStorage
+-- Create ScreenGui
+local gui = Instance.new("ScreenGui")
+gui.Name = "CustomMenu"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
 
--- Universe ID
-local universeId = game.GameId
+-- Create main frame
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 300, 0, 400)
+frame.Position = UDim2.new(0.5, -150, 0.5, -200)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
 
--- Fetch passes
-local function fetchGamepasses()
-	local url = "https://games.roblox.com/v1/games/"..universeId.."/game-passes?limit=100"
-	local ok, res = pcall(function()
-		return HttpService:GetAsync(url)
-	end)
-	if ok then
-		local data = HttpService:JSONDecode(res)
-		if data and data.data then
-			return data.data
-		end
-	end
-	return {}
+-- Title bar
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -30, 0, 40)
+title.Position = UDim2.new(0, 10, 0, 0)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.Text = "Main Menu"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 18
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = frame
+
+-- Close button (X)
+local close = Instance.new("TextButton")
+close.Size = UDim2.new(0, 30, 0, 30)
+close.Position = UDim2.new(1, -35, 0, 5)
+close.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+close.Text = "X"
+close.TextColor3 = Color3.new(1, 1, 1)
+close.TextSize = 18
+close.Font = Enum.Font.GothamBold
+close.Parent = frame
+
+-- Scrollable content
+local scrollingFrame = Instance.new("ScrollingFrame")
+scrollingFrame.Size = UDim2.new(1, -20, 1, -60)
+scrollingFrame.Position = UDim2.new(0, 10, 0, 50)
+scrollingFrame.CanvasSize = UDim2.new(0, 0, 2, 0)
+scrollingFrame.ScrollBarThickness = 8
+scrollingFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+scrollingFrame.BorderSizePixel = 0
+scrollingFrame.Parent = frame
+
+-- Example content
+for i = 1, 20 do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 40)
+    btn.Position = UDim2.new(0, 5, 0, (i - 1) * 45)
+    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    btn.Text = "Button " .. i
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 14
+    btn.Parent = scrollingFrame
 end
 
--- Player added
-Players.PlayerAdded:Connect(function(player)
-	local passes = fetchGamepasses()
-	GamePassEvent:FireClient(player, passes)
+-- Teleport + ESP Toggle Feature
+local TeleportAndESP_Enabled = false
+local ESP_GUIs = {}
 
-	local ui = Instance.new("LocalScript")
-	ui.Name = "GamePassMenuUI"
-	ui.Source = [[
-		local Players = game:GetService("Players")
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
-		local MarketplaceService = game:GetService("MarketplaceService")
-		local TweenService = game:GetService("TweenService")
-		local UIS = game:GetService("UserInputService")
+local function addESP(p)
+    if p == player then return end
+    local head = p.Character and p.Character:FindFirstChild("Head")
+    if head and not head:FindFirstChild("ESP") then
+        local gui = Instance.new("BillboardGui", head)
+        gui.Name = "ESP"
+        gui.Adornee = head
+        gui.Size = UDim2.new(0, 200, 0, 50)
+        gui.StudsOffset = Vector3.new(0, 2, 0)
+        gui.AlwaysOnTop = true
 
-		local player = Players.LocalPlayer
-		local event = ReplicatedStorage:WaitForChild("GamePassListEvent")
+        local lbl = Instance.new("TextLabel", gui)
+        lbl.Size = UDim2.new(1, 0, 1, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Font = Enum.Font.SourceSansBold
+        lbl.TextSize = 14
+        lbl.TextColor3 = Color3.new(1, 0, 0)
+        lbl.Text = p.Name
 
-		-- Colors
-		local neonBlue = Color3.fromRGB(0,255,255)
-		local neonPink = Color3.fromRGB(255,0,128)
-		local darkBG = Color3.fromRGB(15,15,20)
+        ESP_GUIs[p] = gui
+    end
+end
 
-		-- Gui
-		local gui = Instance.new("ScreenGui")
-		gui.Name = "GamePassMenu"
-		gui.ResetOnSpawn = false
-		gui.Parent = player:WaitForChild("PlayerGui")
+local function removeESP()
+    for p, gui in pairs(ESP_GUIs) do
+        if gui and gui.Parent then
+            gui:Destroy()
+        end
+    end
+    ESP_GUIs = {}
+end
 
-		-- Main frame (scaled for device)
-		local frame = Instance.new("Frame")
-		frame.Size = UDim2.new(0.7, 0, 0.6, 0) -- % of screen so it fits mobile
-		frame.Position = UDim2.new(0.5, 0, 0.5, 0)
-		frame.AnchorPoint = Vector2.new(0.5, 0.5)
-		frame.BackgroundColor3 = darkBG
-		frame.Active = true
-		frame.Parent = gui
+local function TeleportAndESP()
+    local char = player.Character or player.CharacterAdded:Wait()
+    local root = char:WaitForChild("HumanoidRootPart")
 
-		Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
-		local stroke = Instance.new("UIStroke", frame)
-		stroke.Thickness = 3
-		stroke.Color = neonBlue
+    -- Teleport above base
+    repeat task.wait() until workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
+    local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
+    if base then
+        local y = base.Position.Y + (base.Size.Y / 2) + 5
+        root.Anchored = true
+        root.CFrame = CFrame.new(base.Position.X, y, base.Position.Z)
+        task.wait(0.5)
+        root.Anchored = false
+    end
 
-		-- Title
-		local title = Instance.new("TextLabel", frame)
-		title.Size = UDim2.new(1, -40, 0, 40)
-		title.Position = UDim2.new(0, 10, 0, 0)
-		title.BackgroundTransparency = 1
-		title.Font = Enum.Font.GothamBold
-		title.TextSize = 18
-		title.TextColor3 = neonPink
-		title.Text = "⚡ GamePasses ⚡"
+    -- ESP for all players
+    for _, p in ipairs(Players:GetPlayers()) do
+        addESP(p)
+    end
 
-		-- Minimize button
-		local minBtn = Instance.new("TextButton", frame)
-		minBtn.Size = UDim2.new(0, 30, 0, 30)
-		minBtn.Position = UDim2.new(1, -35, 0, 5)
-		minBtn.BackgroundColor3 = darkBG
-		minBtn.Text = "-"
-		minBtn.Font = Enum.Font.GothamBold
-		minBtn.TextSize = 20
-		minBtn.TextColor3 = neonBlue
-		Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+    Players.PlayerAdded:Connect(function(p)
+        p.CharacterAdded:Connect(function()
+            addESP(p)
+        end)
+    end)
+end
 
-		-- ScrollFrame
-		local scroll = Instance.new("ScrollingFrame", frame)
-		scroll.Size = UDim2.new(1, -20, 1, -60)
-		scroll.Position = UDim2.new(0, 10, 0, 50)
-		scroll.CanvasSize = UDim2.new(0,0,0,0)
-		scroll.ScrollBarThickness = 6
-		scroll.BackgroundTransparency = 1
-		local layout = Instance.new("UIListLayout", scroll)
-		layout.Padding = UDim.new(0,8)
+local function ToggleTeleportAndESP(toggleBtn)
+    TeleportAndESP_Enabled = not TeleportAndESP_Enabled
+    if TeleportAndESP_Enabled then
+        TeleportAndESP()
+        toggleBtn.Text = "Disable Teleport + ESP"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 255, 60)
+    else
+        removeESP()
+        toggleBtn.Text = "Enable Teleport + ESP"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 255)
+    end
+end
 
-		-- Build pass button
-		local function makeButton(info)
-			local btn = Instance.new("TextButton")
-			btn.Size = UDim2.new(1, -10, 0, 70)
-			btn.BackgroundColor3 = Color3.fromRGB(25,25,35)
-			btn.Text = ""
-			btn.Parent = scroll
-			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
-			local glow = Instance.new("UIStroke", btn)
-			glow.Thickness = 2
-			glow.Color = neonPink
+-- Add toggle button to the top of the menu
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(1, -10, 0, 40)
+toggleBtn.Position = UDim2.new(0, 5, 0, 0)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 255)
+toggleBtn.Text = "Enable Teleport + ESP"
+toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 16
+toggleBtn.Parent = scrollingFrame
 
-			local icon = Instance.new("ImageLabel", btn)
-			icon.Size = UDim2.new(0,60,0,60)
-			icon.Position = UDim2.new(0,5,0.5,-30)
-			icon.BackgroundTransparency = 1
-			icon.Image = "rbxassetid://"..tostring(info.iconImageAssetId or 0)
+toggleBtn.MouseButton1Click:Connect(function()
+    ToggleTeleportAndESP(toggleBtn)
+end)
 
-			local name = Instance.new("TextLabel", btn)
-			name.Size = UDim2.new(1, -80, 0, 30)
-			name.Position = UDim2.new(0,75,0,10)
-			name.BackgroundTransparency = 1
-			name.Font = Enum.Font.GothamBold
-			name.Text = info.name or "Unknown"
-			name.TextColor3 = neonBlue
-			name.TextXAlignment = Enum.TextXAlignment.Left
-			name.TextSize = 16
+-- Move other example buttons down
+for i, btn in ipairs(scrollingFrame:GetChildren()) do
+    if btn ~= toggleBtn and btn:IsA("TextButton") then
+        btn.Position = btn.Position + UDim2.new(0, 0, 0, 45)
+    end
+end
 
-			local price = Instance.new("TextLabel", btn)
-			price.Size = UDim2.new(1, -80, 0, 20)
-			price.Position = UDim2.new(0,75,0,40)
-			price.BackgroundTransparency = 1
-			price.Font = Enum.Font.Gotham
-			price.Text = tostring(info.price or "?").." R$"
-			price.TextColor3 = neonPink
-			price.TextXAlignment = Enum.TextXAlignment.Left
-			price.TextSize = 14
-
-			btn.MouseButton1Click:Connect(function()
-				game:GetService("MarketplaceService"):PromptGamePassPurchase(player, info.id)
-			end)
-			btn.MouseEnter:Connect(function()
-				if not UIS.TouchEnabled then
-					TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = neonPink}):Play()
-				end
-			end)
-			btn.MouseLeave:Connect(function()
-				if not UIS.TouchEnabled then
-					TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(25,25,35)}):Play()
-				end
-			end)
-		end
-
-		-- Minimize
-		local minimized = false
-		minBtn.MouseButton1Click:Connect(function()
-			minimized = not minimized
-			if minimized then
-				scroll.Visible = false
-				frame.Size = UDim2.new(0.3,0,0.1,0)
-				minBtn.Text = "+"
-			else
-				scroll.Visible = true
-				frame.Size = UDim2.new(0.7,0,0.6,0)
-				minBtn.Text = "-"
-			end
-		end)
-
-		-- Drag support (works for touch & mouse)
-		local dragging, dragStart, startPos
-		local function update(input)
-			local delta = input.Position - dragStart
-			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
-									   startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-		end
-		frame.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				dragging = true
-				dragStart = input.Position
-				startPos = frame.Position
-				input.Changed:Connect(function()
-					if input.UserInputState == Enum.UserInputState.End then
-						dragging = false
-					end
-				end)
-			end
-		end)
-		UIS.InputChanged:Connect(function(input)
-			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-				update(input)
-			end
-		end)
-
-		-- Load passes
-		event.OnClientEvent:Connect(function(passes)
-			for _,p in ipairs(passes) do
-				makeButton(p)
-			end
-			scroll.CanvasSize = UDim2.new(0,0,0,#passes*80)
-		end)
-	]]
-	ui.Parent = player:WaitForChild("PlayerGui")
+-- Close button logic
+close.MouseButton1Click:Connect(function()
+    gui.Enabled = not gui.Enabled
 end)
