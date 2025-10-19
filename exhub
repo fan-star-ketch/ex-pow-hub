@@ -1,192 +1,515 @@
--- Steal a Brainrot: Teleport + All Players ESP + Brainrot/Base ESP UI
+-- ModMenu Installer (single script). Run this in Roblox Studio Server context (Command Bar or a Script in ServerScriptService).
+-- It will create/replace:
+--  - ModuleScript "AdminModule" in ServerScriptService
+--  - Script "ModMenuServer" in ServerScriptService
+--  - RemoteEvent "ModMenuAction" in ReplicatedStorage
+--  - LocalScript "ModMenuClient" in StarterGui
+--
+-- Usage:
+-- 1) Open Roblox Studio for your game place.
+-- 2) Paste this entire script into the Command Bar and press Enter, OR
+--    create a Script under ServerScriptService, paste this in, run once in Play/Run or in Studio using "Run".
+-- 3) After running, you'll have a ready installer; test in Play mode as an admin (see AdminModule.Admins).
+--
+-- NOTE: This installer must run with server privileges to create server-side scripts and RemoteEvent.
+-- Do NOT run this in an untrusted environment. This tool is intended for your own game.
 
--- Teleport above base
-local player = game.Players.LocalPlayer
-local char = player.Character or player.CharacterAdded:Wait()
-local root = char:WaitForChild("HumanoidRootPart")
+local ServerScriptService = game:GetService("ServerScriptService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+local ServerStorage = game:GetService("ServerStorage")
 
-repeat task.wait() until workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
-local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
-if base then
-    local y = base.Position.Y + (base.Size.Y / 2) + 5
-    root.Anchored = true
-    root.CFrame = CFrame.new(base.Position.X, y, base.Position.Z)
-    task.wait(0.5)
-    root.Anchored = false
+local function createOrReplace(parent, className, name, source)
+    local existing = parent:FindFirstChild(name)
+    if existing then
+        existing:Destroy()
+    end
+    local inst = Instance.new(className)
+    inst.Name = name
+    if inst:IsA("ModuleScript") or inst:IsA("Script") or inst:IsA("LocalScript") then
+        inst.Source = source
+    end
+    inst.Parent = parent
+    return inst
 end
 
--- ESP for all players
-local function addPlayerESP(p)
-    if p == player then return end
-    local function espChar(char)
-        local hrp = char:FindFirstChild("Head")
-        if hrp and not hrp:FindFirstChild("ESP") then
-            local gui = Instance.new("BillboardGui")
-            gui.Name = "ESP"
-            gui.Adornee = hrp
-            gui.Size = UDim2.new(0,200,0,50)
-            gui.StudsOffset = Vector3.new(0,2,0)
-            gui.AlwaysOnTop = true
-            gui.Parent = hrp
-            local lbl = Instance.new("TextLabel")
-            lbl.Size = UDim2.new(1,0,1,0)
-            lbl.BackgroundTransparency = 1
-            lbl.Font = Enum.Font.SourceSansBold
-            lbl.TextSize = 14
-            lbl.TextColor3 = Color3.new(1,0,0)
-            lbl.Text = p.Name
-            lbl.Parent = gui
+local adminModuleSource = [===[
+-- AdminModule.lua
+-- Module to list admins and provide helper utilities.
+local AdminModule = {}
+
+-- Put Roblox user ids for players allowed to use this menu
+AdminModule.Admins = {
+    -- Add your user ids here. Example:
+    -- 12345678,
+    -- To make yourself an admin, add your UserId below.
+    0, -- replace 0 with your UserId(s)
+}
+
+function AdminModule.IsAdmin(player)
+    if not player then return false end
+    for _, id in ipairs(AdminModule.Admins) do
+        if player.UserId == id then
+            return true
         end
     end
-    if p.Character then espChar(p.Character) end
-    p.CharacterAdded:Connect(function(c)
-        task.wait(1)
-        espChar(c)
-    end)
+    return false
 end
 
-for _,p in ipairs(game.Players:GetPlayers()) do
-    addPlayerESP(p)
-end
-game.Players.PlayerAdded:Connect(addPlayerESP)
-
--- Brainrot/Base ESP with Draggable UI
-local function brainrotESP()
+function AdminModule.GetPlayerByName(name)
+    if not name then return nil end
     local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
-    if not LocalPlayer then
-        warn("No LocalPlayer found. Not running as a local script context.")
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name:lower() == tostring(name):lower() then
+            return p
+        end
+    end
+    return nil
+end
+
+return AdminModule
+]===]
+
+local serverScriptSource = [===[
+-- ModMenuServer.lua
+-- Server-side handler for admin actions. Validates admin rights before executing actions.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
+
+local AdminModule = require(game:GetService("ServerScriptService"):WaitForChild("AdminModule"))
+
+local event = ReplicatedStorage:FindFirstChild("ModMenuAction")
+if not event then
+    event = Instance.new("RemoteEvent")
+    event.Name = "ModMenuAction"
+    event.Parent = ReplicatedStorage
+end
+
+local function safeFindPlayer(identifier)
+    if typeof(identifier) == "Instance" and identifier:IsA("Player") then
+        return identifier
+    elseif typeof(identifier) == "string" then
+        return AdminModule.GetPlayerByName(identifier)
+    end
+    return nil
+end
+
+local function handleAction(player, payload)
+    if not AdminModule.IsAdmin(player) then
+        warn(player.Name .. " attempted to use mod menu but is not admin.")
         return
     end
+    if type(payload) ~= "table" or type(payload.action) ~= "string" then return end
 
-    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui",5)
-    if not PlayerGui then
-        warn("PlayerGui not found!")
-        return
-    end
+    local action = payload.action
+    local targetIdentifier = payload.target
+    local value = payload.value
 
-    if PlayerGui:FindFirstChild("BrainrotESP_UI") then
-        PlayerGui.BrainrotESP_UI:Destroy()
-    end
-
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "BrainrotESP_UI"
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.Parent = PlayerGui
-
-    local Frame = Instance.new("Frame")
-    Frame.Size = UDim2.new(0, 220, 0, 110)
-    Frame.Position = UDim2.new(0, 100, 0, 100)
-    Frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
-    Frame.BorderSizePixel = 0
-    Frame.Active = true
-    Frame.Draggable = true
-    Frame.Parent = ScreenGui
-
-    local Title = Instance.new("TextLabel")
-    Title.Text = "Brainrot ESP Menu fuck niggers"
-    Title.Size = UDim2.new(1,0,0,30)
-    Title.BackgroundTransparency = 1
-    Title.TextColor3 = Color3.new(1,1,1)
-    Title.Font = Enum.Font.GothamSemibold
-    Title.TextSize = 20
-    Title.Parent = Frame
-
-    local ToggleESP = Instance.new("TextButton")
-    ToggleESP.Text = "Enable ESP"
-    ToggleESP.Size = UDim2.new(1,-20,0,40)
-    ToggleESP.Position = UDim2.new(0,10,0,40)
-    ToggleESP.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-    ToggleESP.TextColor3 = Color3.new(1,1,1)
-    ToggleESP.Font = Enum.Font.Gotham
-    ToggleESP.TextSize = 18
-    ToggleESP.AutoButtonColor = true
-    ToggleESP.Parent = Frame
-
-    local ScrollFrame = Instance.new("ScrollingFrame")
-    ScrollFrame.Size = UDim2.new(1, -20, 0, 30)
-    ScrollFrame.Position = UDim2.new(0, 10, 1, -35)
-    ScrollFrame.CanvasSize = UDim2.new(0, 0, 1, 0)
-    ScrollFrame.ScrollBarThickness = 6
-    ScrollFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    ScrollFrame.BorderSizePixel = 0
-    ScrollFrame.Parent = Frame
-
-    local UIListLayout = Instance.new("UIListLayout")
-    UIListLayout.Parent = ScrollFrame
-    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-    local espEnabled = false
-    local highlights = {}
-
-    local function clearESP()
-        for _,h in ipairs(highlights) do
-            if h and h.Parent then
-                h:Destroy()
+    if action == "teleport" then
+        local targetPlayer = safeFindPlayer(targetIdentifier)
+        if targetPlayer and targetPlayer.Character and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if targetHRP and hrp then
+                hrp.CFrame = targetHRP.CFrame + Vector3.new(2,0,0)
             end
         end
-        highlights = {}
-    end
 
-    local function scanAndHighlight()
-        clearESP()
-        for _,child in ipairs(ScrollFrame:GetChildren()) do
-            if child:IsA("TextLabel") then
-                child:Destroy()
+    elseif action == "setWalkSpeed" then
+        local targetPlayer = safeFindPlayer(targetIdentifier) or player
+        if targetPlayer and targetPlayer.Character then
+            local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and type(value) == "number" then
+                humanoid.WalkSpeed = math.clamp(value, 0, 200)
             end
         end
-        UIListLayout.Parent = ScrollFrame
-        for _,obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
-                local highlight = Instance.new("Highlight")
-                highlight.Adornee = obj
-                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                highlight.FillColor = obj.Name == "Brainrot" and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0,255,0)
-                highlight.OutlineColor = Color3.new(1,1,1)
-                highlight.Parent = obj
-                table.insert(highlights, highlight)
 
-                local label = Instance.new("TextLabel")
-                label.Size = UDim2.new(1,0,0,20)
-                label.BackgroundTransparency = 1
-                label.TextColor3 = highlight.FillColor
-                label.Text = obj.Name.." - "..obj:GetFullName()
-                label.Font = Enum.Font.Gotham
-                label.TextSize = 13
-                label.TextXAlignment = Enum.TextXAlignment.Left
-                label.LayoutOrder = #highlights
-                label.Parent = ScrollFrame
+    elseif action == "setJumpPower" then
+        local targetPlayer = safeFindPlayer(targetIdentifier) or player
+        if targetPlayer and targetPlayer.Character then
+            local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and type(value) == "number" then
+                humanoid.JumpPower = math.clamp(value, 0, 300)
             end
         end
-    end
 
-    ToggleESP.MouseButton1Click:Connect(function()
-        espEnabled = not espEnabled
-        if espEnabled then
-            scanAndHighlight()
-            ToggleESP.Text = "Disablee e sex ESP"
-        else
-            clearESP()
-            for _,child in ipairs(ScrollFrame:GetChildren()) do
-                if child:IsA("TextLabel") then
-                    child:Destroy()
-                end
+    elseif action == "kick" then
+        local targetPlayer = safeFindPlayer(targetIdentifier)
+        if targetPlayer then
+            targetPlayer:Kick(value or "Kicked by admin")
+        end
+
+    elseif action == "giveTool" then
+        local toolName = value
+        local targetPlayer = safeFindPlayer(targetIdentifier) or player
+        if type(toolName) == "string" and targetPlayer then
+            local tool = ServerStorage:FindFirstChild(toolName)
+            if tool and tool:IsA("Tool") then
+                local clone = tool:Clone()
+                clone.Parent = targetPlayer.Backpack
             end
-            UIListLayout.Parent = ScrollFrame
-            ToggleESP.Text = "Enable ESP"
+        end
+
+    elseif action == "setGravity" then
+        if type(value) == "number" then
+            Workspace.Gravity = math.clamp(value, 0, 500)
+        end
+
+    elseif action == "heal" then
+        local targetPlayer = safeFindPlayer(targetIdentifier) or player
+        if targetPlayer and targetPlayer.Character then
+            local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.Health = humanoid.MaxHealth
+            end
+        end
+
+    else
+        warn("Unknown mod menu action: "..tostring(action))
+    end
+end
+
+event.OnServerEvent:Connect(function(player, payload)
+    local success, err = pcall(handleAction, player, payload)
+    if not success then
+        warn("Error handling mod menu action from " .. player.Name .. ": " .. tostring(err))
+    end
+end)
+]===]
+
+local clientScriptSource = [===[
+-- ModMenuClient.lua
+-- LocalScript to create a draggable dark-themed mod/admin menu UI.
+-- It communicates with the server via the RemoteEvent "ModMenuAction".
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local event = ReplicatedStorage:WaitForChild("ModMenuAction")
+
+local function new(class, props)
+    local obj = Instance.new(class)
+    if props then
+        for k,v in pairs(props) do
+            if k ~= "Parent" then obj[k] = v end
+        end
+        if props.Parent then obj.Parent = props.Parent end
+    end
+    return obj
+end
+
+local screenGui = new("ScreenGui", {Name="ModMenuGui", ResetOnSpawn=false, Parent=player:WaitForChild("PlayerGui")})
+
+local main = new("Frame", {
+    Name = "MainWindow",
+    Parent = screenGui,
+    Size = UDim2.new(0,520,0,320),
+    Position = UDim2.new(0.5, -260, 0.2, 0),
+    BackgroundColor3 = Color3.fromRGB(24,24,24),
+    BorderSizePixel = 0,
+})
+main.AnchorPoint = Vector2.new(0.5,0)
+new("UICorner", {Parent=main, CornerRadius=UDim.new(0,8)})
+local header = new("Frame", {
+    Parent = main,
+    Size = UDim2.new(1,0,0,36),
+    BackgroundTransparency = 1,
+})
+local title = new("TextLabel", {
+    Parent = header,
+    Text = "Mod Menu",
+    TextColor3 = Color3.fromRGB(220,220,220),
+    Font = Enum.Font.GothamBold,
+    TextSize = 18,
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0,12,0,6),
+    Size = UDim2.new(0.5,0,1,0),
+})
+local closeBtn = new("TextButton", {
+    Parent = header,
+    Text = "X",
+    TextColor3 = Color3.fromRGB(200,200,200),
+    BackgroundTransparency = 1,
+    Position = UDim2.new(1,-36,0,4),
+    Size = UDim2.new(0,28,0,28),
+    Font = Enum.Font.Gotham,
+    TextSize = 16,
+})
+closeBtn.MouseButton1Click:Connect(function()
+    main.Visible = false
+end)
+
+-- Dragging
+local dragging = false
+local dragInput, dragStart, startPos
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Left panel: player list
+local left = new("Frame", {
+    Parent = main,
+    Size = UDim2.new(0,180,1,-10),
+    Position = UDim2.new(0,8,0,42),
+    BackgroundColor3 = Color3.fromRGB(18,18,18),
+    BorderSizePixel = 0,
+})
+new("UICorner", {Parent=left, CornerRadius=UDim.new(0,6)})
+local leftScroll = new("ScrollingFrame", {
+    Parent = left,
+    Size = UDim2.new(1,-6,1,-6),
+    Position = UDim2.new(0,3,0,3),
+    BackgroundTransparency = 1,
+    CanvasSize = UDim2.new(0,0,0,0),
+    ScrollBarThickness = 6,
+})
+local listLayout = new("UIListLayout", {Parent = leftScroll, Padding = UDim.new(0,6)})
+listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    leftScroll.CanvasSize = UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y + 12)
+end)
+
+-- Right panel: controls
+local right = new("Frame", {
+    Parent = main,
+    Size = UDim2.new(1,-200,1,-10),
+    Position = UDim2.new(0,192,0,42),
+    BackgroundTransparency = 1,
+})
+local rightBg = new("Frame", {
+    Parent = right,
+    Size = UDim2.new(1,0,1,0),
+    BackgroundColor3 = Color3.fromRGB(14,14,14),
+    BorderSizePixel = 0,
+})
+new("UICorner", {Parent=rightBg, CornerRadius=UDim.new(0,6)})
+
+local function makeLabel(parent, text, posY)
+    return new("TextLabel", {
+        Parent = parent,
+        Text = text,
+        TextColor3 = Color3.fromRGB(200,200,200),
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1,-12,0,20),
+        Position = UDim2.new(0,8,0,posY),
+        Font = Enum.Font.Gotham,
+        TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+end
+
+local function makeSlider(parent, name, min, max, default, posY, callback)
+    makeLabel(parent, name, posY)
+    local frame = new("Frame", {
+        Parent = parent,
+        Size = UDim2.new(1,-16,0,32),
+        Position = UDim2.new(0,8,0,posY+22),
+        BackgroundTransparency = 1,
+    })
+    local barBg = new("Frame", {Parent = frame, Size = UDim2.new(1,0,0,8), Position = UDim2.new(0,0,0,12), BackgroundColor3 = Color3.fromRGB(50,50,50)})
+    new("UICorner", {Parent=barBg, CornerRadius=UDim.new(0,4)})
+    local fill = new("Frame", {Parent = barBg, Size = UDim2.new((default-min)/(max-min),0,1,0), BackgroundColor3 = Color3.fromRGB(30,120,220)})
+    new("UICorner", {Parent=fill, CornerRadius=UDim.new(0,4)})
+    local valueLabel = new("TextLabel", {
+        Parent = frame,
+        Text = tostring(default),
+        BackgroundTransparency = 1,
+        Size = UDim2.new(0,60,1,0),
+        Position = UDim2.new(1,-60,0,0),
+        TextColor3 = Color3.fromRGB(220,220,220),
+        Font = Enum.Font.Gotham,
+        TextSize = 14,
+    })
+
+    local draggingBar = false
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingBar = true
         end
     end)
-
-    workspace.DescendantAdded:Connect(function(obj)
-        if espEnabled and obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
-            scanAndHighlight()
+    barBg.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingBar = false end end)
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingBar and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local rel = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / barBg.AbsoluteSize.X, 0, 1)
+            fill.Size = UDim2.new(rel,0,1,0)
+            local value = math.floor((min + (max-min)*rel) * 100) / 100
+            valueLabel.Text = tostring(value)
+            if callback then callback(value) end
         end
     end)
-    workspace.DescendantRemoving:Connect(function(obj)
-        if espEnabled and (obj.Name == "Brainrot" or obj.Name == "Base") then
-            scanAndHighlight()
+    return {frame=frame, set=function(v)
+        local rel = (v-min)/(max-min)
+        fill:TweenSize(UDim2.new(math.clamp(rel,0,1),0,1,0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.15, true)
+        valueLabel.Text = tostring(v)
+    end, get=function()
+        return tonumber(valueLabel.Text) or default
+    end}
+end
+
+local function makeActionButton(name, posY, callback)
+    local btn = new("TextButton", {
+        Parent = rightBg,
+        Text = name,
+        BackgroundColor3 = Color3.fromRGB(35,120,230),
+        TextColor3 = Color3.fromRGB(255,255,255),
+        Position = UDim2.new(0,8,0,posY),
+        Size = UDim2.new(0,160,0,30),
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+    })
+    new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,6)})
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+local y = 8
+makeLabel(rightBg, "Target Player (click from list)", y)
+y = y + 28
+local walkSlider = makeSlider(rightBg, "WalkSpeed", 8, 200, 16, y, function(value) end)
+y = y + 62
+local jumpSlider = makeSlider(rightBg, "JumpPower", 25, 300, 50, y, function(value) end)
+y = y + 62
+local gravitySlider = makeSlider(rightBg, "Gravity", 0, 500, 196, y, function(value) end)
+y = y + 62
+
+local actionY = y
+local teleportBtn = makeActionButton("Teleport To", actionY, function()
+    local targetName = rightBg:GetAttribute("selected")
+    if not targetName then return end
+    event:FireServer({action="teleport", target=targetName})
+end)
+local kickBtn = makeActionButton("Kick", actionY + 36, function()
+    local targetName = rightBg:GetAttribute("selected")
+    if not targetName then return end
+    event:FireServer({action="kick", target=targetName, value="Kicked by admin"})
+end)
+local giveBtn = makeActionButton("Give TestTool", actionY + 72, function()
+    local targetName = rightBg:GetAttribute("selected")
+    if not targetName then return end
+    event:FireServer({action="giveTool", target=targetName, value="TestTool"})
+end)
+local healBtn = makeActionButton("Heal", actionY + 108, function()
+    local target = rightBg:GetAttribute("selected")
+    event:FireServer({action="heal", target=target})
+end)
+
+local function sendWalk(v)
+    local target = rightBg:GetAttribute("selected")
+    event:FireServer({action="setWalkSpeed", target=target, value = v})
+end
+local function sendJump(v)
+    local target = rightBg:GetAttribute("selected")
+    event:FireServer({action="setJumpPower", target=target, value = v})
+end
+local function sendGravity(v)
+    event:FireServer({action="setGravity", value = v})
+end
+
+-- Send slider changes when they change (throttled)
+spawn(function()
+    local lastW, lastJ, lastG
+    while true do
+        wait(0.4)
+        local w = walkSlider.get()
+        local j = jumpSlider.get()
+        local g = gravitySlider.get()
+        if w and w ~= lastW then lastW = w; sendWalk(w) end
+        if j and j ~= lastJ then lastJ = j; sendJump(j) end
+        if g and g ~= lastG then lastG = g; sendGravity(g) end
+    end
+end)
+
+local function addPlayerToList(p)
+    local btn = new("TextButton", {
+        Parent = leftScroll,
+        Text = p.Name,
+        Size = UDim2.new(1,-6,0,28),
+        BackgroundColor3 = Color3.fromRGB(25,25,25),
+        TextColor3 = Color3.fromRGB(220,220,220),
+        Font = Enum.Font.Gotham,
+        TextSize = 14,
+    })
+    new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,6)})
+    btn.MouseButton1Click:Connect(function()
+        for _,child in ipairs(leftScroll:GetChildren()) do
+            if child:IsA("TextButton") then child.BackgroundColor3 = Color3.fromRGB(25,25,25) end
         end
+        btn.BackgroundColor3 = Color3.fromRGB(40,80,140)
+        rightBg:SetAttribute("selected", p.Name)
     end)
 end
 
-pcall(brainrotESP)
+for _, p in ipairs(Players:GetPlayers()) do
+    addPlayerToList(p)
+end
+Players.PlayerAdded:Connect(addPlayerToList)
+Players.PlayerRemoving:Connect(function(pl)
+    for _, child in ipairs(leftScroll:GetChildren()) do
+        if child:IsA("TextButton") and child.Text == pl.Name then
+            child:Destroy()
+        end
+    end
+    if rightBg:GetAttribute("selected") == pl.Name then
+        rightBg:SetAttribute("selected", nil)
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.RightControl then
+        main.Visible = not main.Visible
+    end
+end)
+
+walkSlider.set(16)
+jumpSlider.set(50)
+gravitySlider.set(196)
+main.Visible = true
+]===]
+
+-- Create / replace the objects
+print("Installing Mod Menu...")
+
+createOrReplace(ServerScriptService, "ModuleScript", "AdminModule", adminModuleSource)
+print("Created ModuleScript ServerScriptService/AdminModule")
+
+createOrReplace(ServerScriptService, "Script", "ModMenuServer", serverScriptSource)
+print("Created Script ServerScriptService/ModMenuServer")
+
+-- Ensure RemoteEvent exists
+local re = ReplicatedStorage:FindFirstChild("ModMenuAction")
+if re then re:Destroy() end
+re = Instance.new("RemoteEvent")
+re.Name = "ModMenuAction"
+re.Parent = ReplicatedStorage
+print("Created ReplicatedStorage/ModMenuAction")
+
+-- Create LocalScript in StarterGui
+createOrReplace(StarterGui, "LocalScript", "ModMenuClient", clientScriptSource)
+print("Created LocalScript StarterGui/ModMenuClient")
+
+print("Mod Menu installation complete. Edit ServerScriptService.AdminModule to add admin UserIds (replace the 0).")
+print("Test in Play mode. Only players with UserIds added in AdminModule.Admins can perform server actions.")
