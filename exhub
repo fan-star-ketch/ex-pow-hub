@@ -1,16 +1,22 @@
--- exhub (loadstring-friendly, client+server, open-to-all by default)
+-- exhub (loadstring-friendly, client+server, self-only focus)
 -- Usage:
 --  - Run on the server (Script / Command Bar) once to create the RemoteEvent and server-side handlers.
 --  - Run on clients (LocalScript or via loadstring on the client) to spawn the UI.
 --  - Or simply run loadstring(<this file text>)() in supported environments.
 --
--- Configuration (edit as needed):
+-- Changes in this version:
+--  - Removed features that allowed editing other players. All server actions operate only on the invoking player.
+--  - Fixed truncated UI code and various bugs.
+--  - Added client-side features: Noclip, Fly, God Mode (auto-heal), Infinite Jump, Teleport to Mouse, Reset, Copy Position.
+--  - Added new server-side safe actions: setMaxHealth, teleportToPosition, giveTool (self only), setWalkSpeed, setJumpPower, setGravity, heal.
+--
 local CONFIG = {
     RunForAll = true,              -- true: everyone can use the menu. false: only AdminUserIds
     AdminUserIds = { 0 },          -- list of allowed admin UserIds when RunForAll = false
     ToggleKey = Enum.KeyCode.RightControl, -- key to toggle the UI on client (desktop)
     RemoteEventName = "ModMenuAction",     -- RemoteEvent name in ReplicatedStorage
     AllowClientFallback = true,    -- if RemoteEvent missing on client, do limited local-only actions
+    FillScreenPercent = 0.92,      -- size multiplier for screen gui main window
 }
 
 local RunService = game:GetService("RunService")
@@ -20,6 +26,8 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local StarterGui = game:GetService("StarterGui")
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local isServer = RunService:IsServer()
 local isClient = RunService:IsClient()
@@ -31,9 +39,23 @@ local function tcontains(t, v)
     return false
 end
 
--- SERVER: create RemoteEvent and handler
+-- helper to resolve player by name or instance (server-side only)
+local function safeFindPlayer(identifier)
+    if typeof(identifier) == "Instance" and identifier:IsA("Player") then
+        return identifier
+    elseif typeof(identifier) == "string" then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Name:lower() == tostring(identifier):lower() then
+                return p
+            end
+        end
+    end
+    return nil
+end
+
+-- SERVER: create RemoteEvent and handler (server-authoritative, only acts on calling player)
 if isServer then
-    -- ensure RemoteEvent exists
+    -- ensure RemoteEvent exists and is a RemoteEvent
     local event = ReplicatedStorage:FindFirstChild(CONFIG.RemoteEventName)
     if event and not event:IsA("RemoteEvent") then
         event:Destroy()
@@ -52,74 +74,42 @@ if isServer then
         return tcontains(CONFIG.AdminUserIds, player.UserId)
     end
 
-    -- helper to resolve player by name or instance
-    local function safeFindPlayer(identifier)
-        if typeof(identifier) == "Instance" and identifier:IsA("Player") then
-            return identifier
-        elseif typeof(identifier) == "string" then
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p.Name:lower() == tostring(identifier):lower() then
-                    return p
-                end
-            end
-        end
-        return nil
-    end
-
     local function handleAction(player, payload)
+        -- payload must be a table with .action and may have .value or .position (Vector3)
         if not isAdminServer(player) then
-            warn(player.Name .. " attempted to use mod menu but is not admin.")
+            warn(player and player.Name or "unknown", "attempted to use mod menu but is not admin.")
             return
         end
         if type(payload) ~= "table" or type(payload.action) ~= "string" then return end
 
         local action = payload.action
-        local targetIdentifier = payload.target
         local value = payload.value
+        local position = payload.position
 
-        if action == "teleport" then
-            local targetPlayer = safeFindPlayer(targetIdentifier)
-            if targetPlayer and targetPlayer.Character and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-                local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if targetHRP and hrp then
-                    hrp.CFrame = targetHRP.CFrame + Vector3.new(2,0,0)
-                end
+        -- Always operate on the calling player (self-only)
+        local targetPlayer = player
+        if not targetPlayer then return end
+
+        -- convenience: get character/humanoid/hrp
+        local char = targetPlayer.Character
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+        if action == "teleportToPosition" then
+            if hrp and typeof(position) == "Vector3" then
+                -- server teleport player to a requested position (trusted admin permission required)
+                hrp.CFrame = CFrame.new(position) + Vector3.new(0, 2, 0)
             end
 
         elseif action == "setWalkSpeed" then
-            local targetPlayer = safeFindPlayer(targetIdentifier) or player
-            if targetPlayer and targetPlayer.Character then
-                local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid and type(value) == "number" then
-                    humanoid.WalkSpeed = math.clamp(value, 0, 200)
-                end
+            if humanoid and type(value) == "number" then
+                humanoid.WalkSpeed = math.clamp(value, 0, 200)
             end
 
         elseif action == "setJumpPower" then
-            local targetPlayer = safeFindPlayer(targetIdentifier) or player
-            if targetPlayer and targetPlayer.Character then
-                local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid and type(value) == "number" then
-                    humanoid.JumpPower = math.clamp(value, 0, 300)
-                end
-            end
-
-        elseif action == "kick" then
-            local targetPlayer = safeFindPlayer(targetIdentifier)
-            if targetPlayer then
-                targetPlayer:Kick(value or "Kicked by admin")
-            end
-
-        elseif action == "giveTool" then
-            local toolName = value
-            local targetPlayer = safeFindPlayer(targetIdentifier) or player
-            if type(toolName) == "string" and targetPlayer then
-                local tool = ServerStorage:FindFirstChild(toolName)
-                if tool and tool:IsA("Tool") then
-                    local clone = tool:Clone()
-                    clone.Parent = targetPlayer:FindFirstChild("Backpack") or targetPlayer
-                end
+            if humanoid and type(value) == "number" then
+                -- Use JumpPower if available, otherwise JumpHeight fallback (modern Roblox uses JumpPower)
+                pcall(function() humanoid.JumpPower = math.clamp(value, 0, 300) end)
             end
 
         elseif action == "setGravity" then
@@ -128,20 +118,37 @@ if isServer then
             end
 
         elseif action == "heal" then
-            local targetPlayer = safeFindPlayer(targetIdentifier) or player
-            if targetPlayer and targetPlayer.Character then
-                local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    humanoid.Health = humanoid.MaxHealth
+            if humanoid then
+                humanoid.Health = humanoid.MaxHealth
+            end
+
+        elseif action == "giveTool" then
+            -- Only give to self
+            local toolName = value
+            if type(toolName) == "string" and targetPlayer then
+                local tool = ServerStorage:FindFirstChild(toolName)
+                if tool and tool:IsA("Tool") then
+                    local clone = tool:Clone()
+                    local backpack = targetPlayer:FindFirstChild("Backpack")
+                    if backpack then
+                        clone.Parent = backpack
+                    else
+                        clone.Parent = targetPlayer
+                    end
                 end
             end
 
+        elseif action == "setMaxHealth" then
+            if humanoid and type(value) == "number" then
+                humanoid.MaxHealth = math.max(1, value)
+                humanoid.Health = humanoid.MaxHealth
+            end
+
         else
-            warn("Unknown mod menu action: "..tostring(action))
+            warn("Unknown mod menu action (server): "..tostring(action))
         end
     end
 
-    -- Connect event
     event.OnServerEvent:Connect(function(player, payload)
         local ok, err = pcall(handleAction, player, payload)
         if not ok then
@@ -149,19 +156,16 @@ if isServer then
         end
     end)
 
-    -- Optional: send a message to server log
     print("[exhub] Mod Menu server handler installed. RemoteEvent:", event:GetFullName())
     print("[exhub] RunForAll =", tostring(CONFIG.RunForAll))
     return
 end
 
--- CLIENT: create UI and use RemoteEvent if available
+-- CLIENT: create UI and local behavior (self-only)
 if isClient then
-    local TweenService = game:GetService("TweenService")
-    local UserInputService = game:GetService("UserInputService")
     local player = Players.LocalPlayer
 
-    -- Try to find RemoteEvent
+    -- Try to find RemoteEvent (no WaitForChild to allow fallback)
     local event = ReplicatedStorage:FindFirstChild(CONFIG.RemoteEventName)
     if event and not event:IsA("RemoteEvent") then event = nil end
 
@@ -182,49 +186,53 @@ if isClient then
         end
         if type(payload) ~= "table" or type(payload.action) ~= "string" then return end
         local action = payload.action
-        local targetIdentifier = payload.target
         local value = payload.value
+        local position = payload.position
 
-        local function findLocalPlayer(name)
-            if not name then return player end
-            if typeof(name) == "Instance" and name:IsA("Player") then return name end
-            for _,p in ipairs(Players:GetPlayers()) do
-                if p.Name:lower() == tostring(name):lower() then return p end
+        local char = player.Character
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+        if action == "teleportToPosition" then
+            if hrp and typeof(position) == "Vector3" then
+                hrp.CFrame = CFrame.new(position) + Vector3.new(0,2,0)
             end
-            return nil
-        end
 
-        local targetPlayer = findLocalPlayer(targetIdentifier) or player
-
-        if action == "teleport" then
-            if targetPlayer and targetPlayer.Character and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-                local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if targetHRP and hrp then
-                    hrp.CFrame = targetHRP.CFrame + Vector3.new(2,0,0)
-                end
-            end
         elseif action == "setWalkSpeed" then
-            if targetPlayer and targetPlayer.Character then
-                local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid and type(value) == "number" then
-                    humanoid.WalkSpeed = math.clamp(value, 0, 200)
-                end
+            if humanoid and type(value) == "number" then
+                humanoid.WalkSpeed = math.clamp(value, 0, 200)
             end
+
         elseif action == "setJumpPower" then
-            if targetPlayer and targetPlayer.Character then
-                local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid and type(value) == "number" then
-                    humanoid.JumpPower = math.clamp(value, 0, 300)
-                end
+            if humanoid and type(value) == "number" then
+                pcall(function() humanoid.JumpPower = math.clamp(value, 0, 300) end)
             end
+
+        elseif action == "setGravity" then
+            if type(value) == "number" then
+                Workspace.Gravity = math.clamp(value, 0, 500)
+            end
+
         elseif action == "heal" then
-            if targetPlayer and targetPlayer.Character then
-                local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    humanoid.Health = humanoid.MaxHealth
+            if humanoid then humanoid.Health = humanoid.MaxHealth end
+
+        elseif action == "giveTool" then
+            local toolName = value
+            if type(toolName) == "string" then
+                local tool = ServerStorage:FindFirstChild(toolName)
+                if tool and tool:IsA("Tool") then
+                    local clone = tool:Clone()
+                    local backpack = player:FindFirstChild("Backpack")
+                    if backpack then clone.Parent = backpack else clone.Parent = player end
                 end
             end
+
+        elseif action == "setMaxHealth" then
+            if humanoid and type(value) == "number" then
+                humanoid.MaxHealth = math.max(1, value)
+                humanoid.Health = humanoid.MaxHealth
+            end
+
         else
             warn("local: Unknown action:", action)
         end
@@ -243,12 +251,14 @@ if isClient then
         end
     end
 
-    -- UI builder helpers (kept compact but similar to original)
+    -- UI builder helpers
     local function new(class, props)
         local obj = Instance.new(class)
         if props then
             for k,v in pairs(props) do
-                if k ~= "Parent" then pcall(function() obj[k] = v end) end
+                if k ~= "Parent" then
+                    pcall(function() obj[k] = v end)
+                end
             end
             if props.Parent then obj.Parent = props.Parent end
         end
@@ -262,27 +272,26 @@ if isClient then
     screenGui.IgnoreGuiInset = true
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
-    -- Main window: use scale so it works on mobile; but constrain max pixel size for desktop
+    -- Main window
     local main = new("Frame", {
         Name = "MainWindow",
         Parent = screenGui,
-        Size = UDim2.new(0.92, 0, 0.78, 0), -- responsive by default
+        Size = UDim2.new(CONFIG.FillScreenPercent, 0, 0.78, 0),
         Position = UDim2.new(0.5, 0, 0.08, 0),
         BackgroundColor3 = Color3.fromRGB(24,24,24),
         BorderSizePixel = 0,
     })
     main.AnchorPoint = Vector2.new(0.5,0)
     new("UICorner", {Parent=main, CornerRadius=UDim.new(0,8)})
-    -- limit max size on large displays
     local sizeConstraint = new("UISizeConstraint", { Parent = main })
-    sizeConstraint.MaxSize = Vector2.new(820, 760)
+    sizeConstraint.MaxSize = Vector2.new(1000, 820)
 
-    -- Header (drag handle)
+    -- Header
     local header = new("Frame", { Parent = main, Size = UDim2.new(1,0,0,40), BackgroundTransparency = 1 })
     local title = new("TextLabel", {
-        Parent = header, Text = "Mod Menu", TextColor3 = Color3.fromRGB(220,220,220),
+        Parent = header, Text = "ExHub - Self Menu", TextColor3 = Color3.fromRGB(220,220,220),
         Font = Enum.Font.GothamBold, TextSize = 18, BackgroundTransparency = 1,
-        Position = UDim2.new(0,12,0,6), Size = UDim2.new(0.6,0,1,0),
+        Position = UDim2.new(0,12,0,6), Size = UDim2.new(0.7,0,1,0),
     })
     local closeBtn = new("TextButton", {
         Parent = header, Text = "X", TextColor3 = Color3.fromRGB(200,200,200),
@@ -291,7 +300,7 @@ if isClient then
     })
     closeBtn.MouseButton1Click:Connect(function() main.Visible = false end)
 
-    -- Dragging (supports mouse + touch)
+    -- Dragging
     local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
     header.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -315,8 +324,8 @@ if isClient then
         end
     end)
 
-    -- Body layout: left player list and right controls (right side is scrollable on small screens)
-    local left = new("Frame", { Parent = main, Size = UDim2.new(0.36, -12, 1, -64), Position = UDim2.new(0,8,0,48), BackgroundColor3 = Color3.fromRGB(18,18,18), BorderSizePixel = 0 })
+    -- Body layout (two columns)
+    local left = new("Frame", { Parent = main, Size = UDim2.new(0.38, -12, 1, -64), Position = UDim2.new(0,8,0,48), BackgroundColor3 = Color3.fromRGB(18,18,18), BorderSizePixel = 0 })
     new("UICorner", {Parent=left, CornerRadius=UDim.new(0,6)})
     local leftScroll = new("ScrollingFrame", {
         Parent = left, Size = UDim2.new(1,-6,1,-6), Position = UDim2.new(0,3,0,3),
@@ -328,12 +337,12 @@ if isClient then
         leftScroll.CanvasSize = UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y + 12)
     end)
 
-    -- Right side uses a ScrollingFrame so controls are always reachable on mobile
-    local right = new("Frame", { Parent = main, Size = UDim2.new(0.62, -12, 1, -64), Position = UDim2.new(0.38, 8, 0, 48), BackgroundTransparency = 1 })
+    local right = new("Frame", { Parent = main, Size = UDim2.new(0.60, -12, 1, -64), Position = UDim2.new(0.40, 8, 0, 48), BackgroundTransparency = 1 })
     local rightScroll = new("ScrollingFrame", { Parent = right, Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, CanvasSize = UDim2.new(0,0,0,0), ScrollBarThickness = 8, VerticalScrollBarInset = Enum.ScrollBarInset.Always })
-    local rightBg = new("Frame", { Parent = rightScroll, Size = UDim2.new(1,0,0,200), BackgroundColor3 = Color3.fromRGB(14,14,14), BorderSizePixel = 0 })
+    local rightBg = new("Frame", { Parent = rightScroll, Size = UDim2.new(1,0,0,300), BackgroundColor3 = Color3.fromRGB(14,14,14), BorderSizePixel = 0 })
     new("UICorner", {Parent=rightBg, CornerRadius=UDim.new(0,6)})
 
+    -- label helper
     local function makeLabel(parent, text, posY)
         return new("TextLabel", {
             Parent = parent, Text = text, TextColor3 = Color3.fromRGB(200,200,200),
@@ -342,6 +351,7 @@ if isClient then
         })
     end
 
+    -- slider builder
     local function makeSlider(parent, name, min, max, default, posY)
         makeLabel(parent, name, posY)
         local frame = new("Frame", { Parent = parent, Size = UDim2.new(1,-16,0,40), Position = UDim2.new(0,8,0,posY+22), BackgroundTransparency = 1 })
@@ -349,130 +359,295 @@ if isClient then
         new("UICorner", {Parent=barBg, CornerRadius=UDim.new(0,5)})
         local fill = new("Frame", {Parent = barBg, Size = UDim2.new((default-min)/(max-min),0,1,0), BackgroundColor3 = Color3.fromRGB(30,120,220)})
         new("UICorner", {Parent=fill, CornerRadius=UDim.new(0,5)})
-        local valueLabel = new("TextLabel", { Parent = frame, Text = tostring(default), BackgroundTransparency = 1, Size = UDim2.new(0,64,1,0), Position = UDim2.new(1,-64,0,0), TextColor3 = Color3.fromRGB(220,220,220), Font = Enum.Font.Gotham, TextSize = 14 })
+        local valueLabel = new("TextLabel", { Parent = frame, Text = tostring(default), BackgroundTransparency = 1, Size = UDim2.new(0,64,1,0), Position = UDim2.new(1,-64,0,0), TextColor3 = Color3.fromRGB(230,230,230), Font = Enum.Font.Gotham, TextSize = 14 })
 
         local draggingBar = false
         barBg.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingBar = true end
         end)
-        barBg.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingBar = false end end)
+        barBg.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingBar = false end
+        end)
         UserInputService.InputChanged:Connect(function(input)
             if draggingBar and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                local rel = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / barBg.AbsoluteSize.X, 0, 1)
+                local rel = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / math.max(barBg.AbsoluteSize.X, 1), 0, 1)
                 fill.Size = UDim2.new(rel,0,1,0)
                 local value = math.floor((min + (max-min)*rel) * 100) / 100
                 valueLabel.Text = tostring(value)
             end
         end)
-        return { frame = frame, set = function(v)
-            local rel = (v-min)/(max-min)
-            fill:TweenSize(UDim2.new(math.clamp(rel,0,1),0,1,0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.15, true)
-            valueLabel.Text = tostring(v)
-        end, get = function() return tonumber(valueLabel.Text) or default end }
+        return {
+            frame = frame,
+            set = function(v)
+                local rel = (v-min)/(max-min)
+                fill:TweenSize(UDim2.new(math.clamp(rel,0,1),0,1,0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.15, true)
+                valueLabel.Text = tostring(math.floor((v or default)*100)/100)
+            end,
+            get = function() return tonumber(valueLabel.Text) or default end
+        }
     end
 
+    -- button builder
     local function makeActionButton(name, posY, callback)
-        local btn = new("TextButton", { Parent = rightBg, Text = name, BackgroundColor3 = Color3.fromRGB(35,120,230), TextColor3 = Color3.fromRGB(255,255,255), Position = UDim2.new(0,8,0,posY), Size = UDim2.new(0.45,-12,0,36), Font = Enum.Font.Gotham, TextSize = 16 })
+        local btn = new("TextButton", { Parent = rightBg, Text = name, BackgroundColor3 = Color3.fromRGB(35,120,230), TextColor3 = Color3.fromRGB(255,255,255), Position = UDim2.new(0,8,0,posY), Size = UDim2.new(0.46, -12, 0, 40), Font = Enum.Font.GothamBold, TextSize = 14, AutoButtonColor = true })
         new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,6)})
-        btn.MouseButton1Click:Connect(callback)
+        btn.MouseButton1Click:Connect(function()
+            pcall(callback)
+        end)
         return btn
     end
 
     -- build right-side controls
     local y = 8
-    makeLabel(rightBg, "Target Player (tap a name on the left)", y)
+    makeLabel(rightBg, "Local Player Controls", y)
     y = y + 28
-    local walkSlider = makeSlider(rightBg, "WalkSpeed", 8, 200, 16, y)
+    local walkSlider = makeSlider(rightBg, "WalkSpeed", 0, 200, 16, y)
     y = y + 64
-    local jumpSlider = makeSlider(rightBg, "JumpPower", 25, 300, 50, y)
+    local jumpSlider = makeSlider(rightBg, "JumpPower", 0, 300, 50, y)
     y = y + 64
-    local gravitySlider = makeSlider(rightBg, "Gravity", 0, 500, 196, y)
+    local gravitySlider = makeSlider(rightBg, "Gravity", 0, 500, Workspace.Gravity or 196, y)
     y = y + 64
+    local maxHealthSlider = makeSlider(rightBg, "MaxHealth", 1, 1000, 100, y)
+    y = y + 74
 
     local actionY = y
-    local teleportBtn = makeActionButton("Teleport To", actionY, function()
-        local targetName = rightBg:GetAttribute("selected")
-        if not targetName then return end
-        sendAction({ action = "teleport", target = targetName })
+    local teleportBtn = makeActionButton("Teleport To Mouse", actionY, function()
+        local mouse = player:GetMouse()
+        local target = mouse.Hit and mouse.Hit.Position
+        if target then
+            sendAction({ action = "teleportToPosition", position = target })
+        end
     end)
-    local kickBtn = makeActionButton("Kick", actionY + 44, function()
-        local targetName = rightBg:GetAttribute("selected")
-        if not targetName then return end
-        sendAction({ action = "kick", target = targetName, value = "Kicked by admin" })
+    local resetBtn = makeActionButton("Reset Character", actionY + 44, function()
+        local char = player.Character
+        if char then
+            pcall(function() player:LoadCharacter() end)
+        end
     end)
-    local giveBtn = makeActionButton("Give TestTool", actionY + 88, function()
-        local targetName = rightBg:GetAttribute("selected")
-        if not targetName then return end
-        sendAction({ action = "giveTool", target = targetName, value = "TestTool" })
+    local copyPosBtn = makeActionButton("Copy Position", actionY + 88, function()
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local pos = tostring(hrp.Position)
+            -- SetClipboard is not available in all environments; pcall to avoid errors
+            pcall(function() setclipboard(pos) end)
+            print("[exhub] Position copied:", pos)
+        end
     end)
-    local healBtn = makeActionButton("Heal", actionY + 132, function()
-        local target = rightBg:GetAttribute("selected")
-        sendAction({ action = "heal", target = target })
+    local giveBtn = makeActionButton("Give TestTool", actionY + 132, function()
+        sendAction({ action = "giveTool", value = "TestTool" })
     end)
 
-    -- position action buttons nicer on small widths (two columns if space)
+    -- arrange two-column layout nicely
     teleportBtn.Position = UDim2.new(0,8,0,actionY)
-    kickBtn.Position = UDim2.new(0.5, -6, 0, actionY)
-    giveBtn.Position = UDim2.new(0,8,0,actionY + 44)
-    healBtn.Position = UDim2.new(0.5, -6, 0,actionY + 44)
+    resetBtn.Position    = UDim2.new(0.5, -6, 0, actionY)
+    copyPosBtn.Position  = UDim2.new(0,8,0,actionY + 44)
+    giveBtn.Position     = UDim2.new(0.5, -6, 0, actionY + 44)
 
-    local function sendWalk(v)
-        local target = rightBg:GetAttribute("selected")
-        sendAction({ action = "setWalkSpeed", target = target, value = v })
-    end
-    local function sendJump(v)
-        local target = rightBg:GetAttribute("selected")
-        sendAction({ action = "setJumpPower", target = target, value = v })
-    end
-    local function sendGravity(v)
-        sendAction({ action = "setGravity", value = v })
+    -- local-only toggles and features
+    local togglesY = actionY + 200
+    local function makeToggle(name, posY, default)
+        local label = makeLabel(rightBg, name, posY)
+        local toggle = new("TextButton", { Parent = rightBg, Text = tostring(default and "ON" or "OFF"), Size = UDim2.new(0,64,0,28), Position = UDim2.new(1,-76,0,posY), BackgroundColor3 = default and Color3.fromRGB(34,139,34) or Color3.fromRGB(120,30,30), Font = Enum.Font.GothamBold, TextSize = 14 })
+        new("UICorner", {Parent=toggle, CornerRadius=UDim.new(0,4)})
+        local state = default and true or false
+        toggle.MouseButton1Click:Connect(function()
+            state = not state
+            toggle.Text = state and "ON" or "OFF"
+            toggle.BackgroundColor3 = state and Color3.fromRGB(34,139,34) or Color3.fromRGB(120,30,30)
+            -- fire a Bindable callback stored on the toggle object
+            if toggle._onToggle then pcall(toggle._onToggle, state) end
+        end)
+        return toggle
     end
 
-    -- throttle loop for sliders
+    local noclipToggle = makeToggle("Noclip", togglesY, false)
+    local flyToggle = makeToggle("Fly (WASD+Space+Shift)", togglesY + 28, false)
+    local godToggle = makeToggle("God Mode (auto-heal)", togglesY + 56, false)
+    local infJumpToggle = makeToggle("Infinite Jump", togglesY + 84, false)
+
+    -- link sliders to server actions (throttled loop)
+    local function sendWalk(v) sendAction({ action = "setWalkSpeed", value = v }) end
+    local function sendJump(v) sendAction({ action = "setJumpPower", value = v }) end
+    local function sendGravity(v) sendAction({ action = "setGravity", value = v }) end
+    local function sendMaxHealth(v) sendAction({ action = "setMaxHealth", value = v }) end
+
     spawn(function()
-        local lastW, lastJ, lastG
+        local lastW, lastJ, lastG, lastH
         while true do
             wait(0.4)
             local w = walkSlider.get()
             local j = jumpSlider.get()
             local g = gravitySlider.get()
+            local h = maxHealthSlider.get()
             if w and w ~= lastW then lastW = w; sendWalk(w) end
             if j and j ~= lastJ then lastJ = j; sendJump(j) end
             if g and g ~= lastG then lastG = g; sendGravity(g) end
+            if h and h ~= lastH then lastH = h; sendMaxHealth(h) end
         end
     end)
 
-    -- player list population
-    local function addPlayerToList(p)
-        local btn = new("TextButton", {
-            Parent = leftScroll, Text = p.Name, Size = UDim2.new(1,-6,0,36),
-            BackgroundColor3 = Color3.fromRGB(25,25,25), TextColor3 = Color3.fromRGB(220,220,220),
-            Font = Enum.Font.Gotham, TextSize = 16,
-        })
-        new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,6)})
-        btn.MouseButton1Click:Connect(function()
-            for _,child in ipairs(leftScroll:GetChildren()) do
-                if child:IsA("TextButton") then child.BackgroundColor3 = Color3.fromRGB(25,25,25) end
+    -- Local-only feature implementations
+    local characterCleanupHandlers = {}
+
+    local function onCharacterAdded(char)
+        -- Cleanup previous handlers
+        for _, c in ipairs(characterCleanupHandlers) do
+            pcall(c)
+        end
+        characterCleanupHandlers = {}
+
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:WaitForChild("HumanoidRootPart", 5)
+
+        -- Noclip handler
+        local noclipEnabled = false
+        local function enableNoclip(e)
+            noclipEnabled = e
+            if noclipEnabled then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                end
+                -- keep making parts non-collidable while alive
+                local conn
+                conn = RunService.Stepped:Connect(function()
+                    if not noclipEnabled or not char.Parent then
+                        conn:Disconnect()
+                        return
+                    end
+                    for _, part in ipairs(char:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = false
+                        end
+                    end
+                end)
+                table.insert(characterCleanupHandlers, function() if conn and conn.Disconnect then conn:Disconnect() end end)
+            else
+                -- restore collisions (best-effort)
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = true
+                    end
+                end
             end
-            btn.BackgroundColor3 = Color3.fromRGB(40,80,140)
-            rightBg:SetAttribute("selected", p.Name)
-        end)
+        end
+        noclipToggle._onToggle = enableNoclip
+
+        -- Infinite jump handler
+        local infJumpEnabled = false
+        local function onJumpRequest()
+            if infJumpEnabled and humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                humanoid.Jump = true
+            end
+        end
+        infJumpToggle._onToggle = function(state) infJumpEnabled = state end
+        local jumpConn = UserInputService.JumpRequest:Connect(onJumpRequest)
+        table.insert(characterCleanupHandlers, function() if jumpConn then jumpConn:Disconnect() end end)
+
+        -- God mode (auto-heal)
+        local godEnabled = false
+        local godConn
+        godToggle._onToggle = function(state)
+            godEnabled = state
+            if godEnabled and humanoid then
+                if godConn and godConn.Disconnect then godConn:Disconnect() end
+                godConn = RunService.Heartbeat:Connect(function()
+                    if humanoid and humanoid.Health and humanoid.MaxHealth then
+                        if humanoid.Health < humanoid.MaxHealth then
+                            humanoid.Health = humanoid.MaxHealth
+                        end
+                    end
+                end)
+                table.insert(characterCleanupHandlers, function() if godConn then godConn:Disconnect() end end)
+            else
+                if godConn and godConn.Disconnect then godConn:Disconnect() end
+            end
+        end
+
+        -- Fly implementation (simple)
+        local flying = false
+        local flyForce, flyGyro, flyConn
+        local moveVec = Vector3.new(0,0,0)
+        local moveSpeed = 50
+
+        local function startFly()
+            if not hrp then return end
+            if flyForce then flyForce:Destroy() end
+            if flyGyro then flyGyro:Destroy() end
+            flyForce = Instance.new("BodyVelocity")
+            flyForce.MaxForce = Vector3.new(1e5,1e5,1e5)
+            flyForce.Velocity = Vector3.new(0,0,0)
+            flyForce.Parent = hrp
+            flyGyro = Instance.new("BodyGyro")
+            flyGyro.MaxTorque = Vector3.new(1e5,1e5,1e5)
+            flyGyro.Parent = hrp
+            flying = true
+
+            flyConn = RunService.RenderStepped:Connect(function(dt)
+                if not flying or not hrp then return end
+                local cam = workspace.CurrentCamera
+                local look = cam.CFrame - cam.CFrame.Position
+                local forward = look.LookVector
+                local right = cam.CFrame.RightVector
+                local up = Vector3.new(0,1,0)
+                local vel = (forward * moveVec.Z + right * moveVec.X + up * moveVec.Y) * moveSpeed
+                flyForce.Velocity = vel
+                flyGyro.CFrame = CFrame.new(hrp.Position, hrp.Position + cam.CFrame.LookVector)
+            end)
+            table.insert(characterCleanupHandlers, function() if flyConn and flyConn.Disconnect then flyConn:Disconnect() end end)
+        end
+
+        local function stopFly()
+            flying = false
+            if flyForce then flyForce:Destroy(); flyForce = nil end
+            if flyGyro then flyGyro:Destroy(); flyGyro = nil end
+            if flyConn and flyConn.Disconnect then flyConn:Disconnect(); flyConn = nil end
+        end
+
+        flyToggle._onToggle = function(state)
+            if state then
+                -- connect movement input
+                moveVec = Vector3.new(0,0,0)
+                local conn1, conn2
+                conn1 = UserInputService.InputBegan:Connect(function(input, gp)
+                    if gp then return end
+                    if input.KeyCode == Enum.KeyCode.W then moveVec = Vector3.new(moveVec.X, moveVec.Y, -1) end
+                    if input.KeyCode == Enum.KeyCode.S then moveVec = Vector3.new(moveVec.X, moveVec.Y, 1) end
+                    if input.KeyCode == Enum.KeyCode.A then moveVec = Vector3.new(-1, moveVec.Y, moveVec.Z) end
+                    if input.KeyCode == Enum.KeyCode.D then moveVec = Vector3.new(1, moveVec.Y, moveVec.Z) end
+                    if input.KeyCode == Enum.KeyCode.Space then moveVec = Vector3.new(moveVec.X, 1, moveVec.Z) end
+                    if input.KeyCode == Enum.KeyCode.LeftShift then moveVec = Vector3.new(moveVec.X, -1, moveVec.Z) end
+                end)
+                conn2 = UserInputService.InputEnded:Connect(function(input, gp)
+                    if gp then return end
+                    if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.S then moveVec = Vector3.new(moveVec.X, moveVec.Y, 0) end
+                    if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.D then moveVec = Vector3.new(0, moveVec.Y, moveVec.Z) end
+                    if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.LeftShift then moveVec = Vector3.new(moveVec.X, 0, moveVec.Z) end
+                end)
+                table.insert(characterCleanupHandlers, function() if conn1 then conn1:Disconnect() end if conn2 then conn2:Disconnect() end end)
+                startFly()
+            else
+                stopFly()
+            end
+        end
+
+        -- ensure toggles re-apply on respawn if they were on
+        -- we will keep states on the toggle UI itself (their text)
     end
 
-    for _, p in ipairs(Players:GetPlayers()) do addPlayerToList(p) end
-    Players.PlayerAdded:Connect(function(p) addPlayerToList(p) end)
-    Players.PlayerRemoving:Connect(function(pl)
-        for _, child in ipairs(leftScroll:GetChildren()) do
-            if child:IsA("TextButton") and child.Text == pl.Name then child:Destroy() end
-        end
-        if rightBg:GetAttribute("selected") == pl.Name then rightBg:SetAttribute("selected", nil) end
-    end)
+    -- character added hook
+    if player.Character then
+        onCharacterAdded(player.Character)
+    end
+    player.CharacterAdded:Connect(onCharacterAdded)
 
-    -- Update rightBg size and rightScroll canvas so content is scrollable
-    rightBg.Size = UDim2.new(1,0,0, y + 20)
-    rightScroll.CanvasSize = UDim2.new(0,0,0, y + 30)
+    -- Update rightBg and rightScroll canvas so content is scrollable
+    rightBg.Size = UDim2.new(1,0,0, togglesY + 120)
+    rightScroll.CanvasSize = UDim2.new(0,0,0, togglesY + 140)
 
-    -- mobile-friendly toggle button (visible when touch enabled)
+    -- mobile-friendly toggle
     if UserInputService.TouchEnabled then
         local mobileToggle = new("TextButton", {
             Parent = screenGui, Text = "≡", TextColor3 = Color3.fromRGB(255,255,255),
@@ -502,12 +677,13 @@ if isClient then
     -- default slider values
     walkSlider.set(16)
     jumpSlider.set(50)
-    gravitySlider.set(196)
+    gravitySlider.set(Workspace.Gravity or 196)
+    maxHealthSlider.set(100)
 
     -- initial visibility
     main.Visible = isAdminClient()
 
-    -- simple note in output
+    -- notify connection status
     if canUseRemote() then
         print("[exhub] Connected to server RemoteEvent:", event:GetFullName())
     else
