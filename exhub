@@ -8,7 +8,7 @@
 local CONFIG = {
     RunForAll = true,              -- true: everyone can use the menu. false: only AdminUserIds
     AdminUserIds = { 0 },          -- list of allowed admin UserIds when RunForAll = false
-    ToggleKey = Enum.KeyCode.RightControl, -- key to toggle the UI on client
+    ToggleKey = Enum.KeyCode.RightControl, -- key to toggle the UI on client (desktop)
     RemoteEventName = "ModMenuAction",     -- RemoteEvent name in ReplicatedStorage
     AllowClientFallback = true,    -- if RemoteEvent missing on client, do limited local-only actions
 }
@@ -24,7 +24,7 @@ local Workspace = game:GetService("Workspace")
 local isServer = RunService:IsServer()
 local isClient = RunService:IsClient()
 
--- Utility: shallow clone table
+-- Utility: shallow contains check
 local function tcontains(t, v)
     if not t then return false end
     for _,x in ipairs(t) do if x == v then return true end end
@@ -248,7 +248,7 @@ if isClient then
         local obj = Instance.new(class)
         if props then
             for k,v in pairs(props) do
-                if k ~= "Parent" then obj[k] = v end
+                if k ~= "Parent" then pcall(function() obj[k] = v end) end
             end
             if props.Parent then obj.Parent = props.Parent end
         end
@@ -259,35 +259,42 @@ if isClient then
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "ModMenuGui"
     screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
+    -- Main window: use scale so it works on mobile; but constrain max pixel size for desktop
     local main = new("Frame", {
         Name = "MainWindow",
         Parent = screenGui,
-        Size = UDim2.new(0,520,0,320),
-        Position = UDim2.new(0.5, -260, 0.2, 0),
+        Size = UDim2.new(0.92, 0, 0.78, 0), -- responsive by default
+        Position = UDim2.new(0.5, 0, 0.08, 0),
         BackgroundColor3 = Color3.fromRGB(24,24,24),
         BorderSizePixel = 0,
     })
     main.AnchorPoint = Vector2.new(0.5,0)
     new("UICorner", {Parent=main, CornerRadius=UDim.new(0,8)})
-    local header = new("Frame", { Parent = main, Size = UDim2.new(1,0,0,36), BackgroundTransparency = 1 })
+    -- limit max size on large displays
+    local sizeConstraint = new("UISizeConstraint", { Parent = main })
+    sizeConstraint.MaxSize = Vector2.new(820, 760)
+
+    -- Header (drag handle)
+    local header = new("Frame", { Parent = main, Size = UDim2.new(1,0,0,40), BackgroundTransparency = 1 })
     local title = new("TextLabel", {
         Parent = header, Text = "Mod Menu", TextColor3 = Color3.fromRGB(220,220,220),
         Font = Enum.Font.GothamBold, TextSize = 18, BackgroundTransparency = 1,
-        Position = UDim2.new(0,12,0,6), Size = UDim2.new(0.5,0,1,0),
+        Position = UDim2.new(0,12,0,6), Size = UDim2.new(0.6,0,1,0),
     })
     local closeBtn = new("TextButton", {
         Parent = header, Text = "X", TextColor3 = Color3.fromRGB(200,200,200),
-        BackgroundTransparency = 1, Position = UDim2.new(1,-36,0,4), Size = UDim2.new(0,28,0,28),
-        Font = Enum.Font.Gotham, TextSize = 16,
+        BackgroundTransparency = 1, Position = UDim2.new(1,-44,0,6), Size = UDim2.new(0,36,0,28),
+        Font = Enum.Font.Gotham, TextSize = 18,
     })
     closeBtn.MouseButton1Click:Connect(function() main.Visible = false end)
 
-    -- Dragging
+    -- Dragging (supports mouse + touch)
     local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
     header.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = main.Position
@@ -297,30 +304,34 @@ if isClient then
         end
     end)
     header.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
     end)
     UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
+        if input == dragInput and dragging and dragStart and startPos then
             local delta = input.Position - dragStart
             main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
     end)
 
-    -- Left player list
-    local left = new("Frame", { Parent = main, Size = UDim2.new(0,180,1,-10), Position = UDim2.new(0,8,0,42), BackgroundColor3 = Color3.fromRGB(18,18,18), BorderSizePixel = 0 })
+    -- Body layout: left player list and right controls (right side is scrollable on small screens)
+    local left = new("Frame", { Parent = main, Size = UDim2.new(0.36, -12, 1, -64), Position = UDim2.new(0,8,0,48), BackgroundColor3 = Color3.fromRGB(18,18,18), BorderSizePixel = 0 })
     new("UICorner", {Parent=left, CornerRadius=UDim.new(0,6)})
     local leftScroll = new("ScrollingFrame", {
         Parent = left, Size = UDim2.new(1,-6,1,-6), Position = UDim2.new(0,3,0,3),
-        BackgroundTransparency = 1, CanvasSize = UDim2.new(0,0,0,0), ScrollBarThickness = 6,
+        BackgroundTransparency = 1, CanvasSize = UDim2.new(0,0,0,0), ScrollBarThickness = 8,
+        VerticalScrollBarInset = Enum.ScrollBarInset.Always,
     })
     local listLayout = new("UIListLayout", {Parent = leftScroll, Padding = UDim.new(0,6)})
     listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
         leftScroll.CanvasSize = UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y + 12)
     end)
 
-    -- Right controls
-    local right = new("Frame", { Parent = main, Size = UDim2.new(1,-200,1,-10), Position = UDim2.new(0,192,0,42), BackgroundTransparency = 1 })
-    local rightBg = new("Frame", { Parent = right, Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.fromRGB(14,14,14), BorderSizePixel = 0 })
+    -- Right side uses a ScrollingFrame so controls are always reachable on mobile
+    local right = new("Frame", { Parent = main, Size = UDim2.new(0.62, -12, 1, -64), Position = UDim2.new(0.38, 8, 0, 48), BackgroundTransparency = 1 })
+    local rightScroll = new("ScrollingFrame", { Parent = right, Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, CanvasSize = UDim2.new(0,0,0,0), ScrollBarThickness = 8, VerticalScrollBarInset = Enum.ScrollBarInset.Always })
+    local rightBg = new("Frame", { Parent = rightScroll, Size = UDim2.new(1,0,0,200), BackgroundColor3 = Color3.fromRGB(14,14,14), BorderSizePixel = 0 })
     new("UICorner", {Parent=rightBg, CornerRadius=UDim.new(0,6)})
 
     local function makeLabel(parent, text, posY)
@@ -333,20 +344,20 @@ if isClient then
 
     local function makeSlider(parent, name, min, max, default, posY)
         makeLabel(parent, name, posY)
-        local frame = new("Frame", { Parent = parent, Size = UDim2.new(1,-16,0,32), Position = UDim2.new(0,8,0,posY+22), BackgroundTransparency = 1 })
-        local barBg = new("Frame", {Parent = frame, Size = UDim2.new(1,0,0,8), Position = UDim2.new(0,0,0,12), BackgroundColor3 = Color3.fromRGB(50,50,50)})
-        new("UICorner", {Parent=barBg, CornerRadius=UDim.new(0,4)})
+        local frame = new("Frame", { Parent = parent, Size = UDim2.new(1,-16,0,40), Position = UDim2.new(0,8,0,posY+22), BackgroundTransparency = 1 })
+        local barBg = new("Frame", {Parent = frame, Size = UDim2.new(1,0,0,10), Position = UDim2.new(0,0,0,12), BackgroundColor3 = Color3.fromRGB(50,50,50)})
+        new("UICorner", {Parent=barBg, CornerRadius=UDim.new(0,5)})
         local fill = new("Frame", {Parent = barBg, Size = UDim2.new((default-min)/(max-min),0,1,0), BackgroundColor3 = Color3.fromRGB(30,120,220)})
-        new("UICorner", {Parent=fill, CornerRadius=UDim.new(0,4)})
-        local valueLabel = new("TextLabel", { Parent = frame, Text = tostring(default), BackgroundTransparency = 1, Size = UDim2.new(0,60,1,0), Position = UDim2.new(1,-60,0,0), TextColor3 = Color3.fromRGB(220,220,220), Font = Enum.Font.Gotham, TextSize = 14 })
+        new("UICorner", {Parent=fill, CornerRadius=UDim.new(0,5)})
+        local valueLabel = new("TextLabel", { Parent = frame, Text = tostring(default), BackgroundTransparency = 1, Size = UDim2.new(0,64,1,0), Position = UDim2.new(1,-64,0,0), TextColor3 = Color3.fromRGB(220,220,220), Font = Enum.Font.Gotham, TextSize = 14 })
 
         local draggingBar = false
         barBg.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingBar = true end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingBar = true end
         end)
-        barBg.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingBar = false end end)
+        barBg.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingBar = false end end)
         UserInputService.InputChanged:Connect(function(input)
-            if draggingBar and input.UserInputType == Enum.UserInputType.MouseMovement then
+            if draggingBar and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 local rel = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / barBg.AbsoluteSize.X, 0, 1)
                 fill.Size = UDim2.new(rel,0,1,0)
                 local value = math.floor((min + (max-min)*rel) * 100) / 100
@@ -361,21 +372,22 @@ if isClient then
     end
 
     local function makeActionButton(name, posY, callback)
-        local btn = new("TextButton", { Parent = rightBg, Text = name, BackgroundColor3 = Color3.fromRGB(35,120,230), TextColor3 = Color3.fromRGB(255,255,255), Position = UDim2.new(0,8,0,posY), Size = UDim2.new(0,160,0,30), Font = Enum.Font.GothamBold, TextSize = 14 })
+        local btn = new("TextButton", { Parent = rightBg, Text = name, BackgroundColor3 = Color3.fromRGB(35,120,230), TextColor3 = Color3.fromRGB(255,255,255), Position = UDim2.new(0,8,0,posY), Size = UDim2.new(0.45,-12,0,36), Font = Enum.Font.Gotham, TextSize = 16 })
         new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,6)})
         btn.MouseButton1Click:Connect(callback)
         return btn
     end
 
+    -- build right-side controls
     local y = 8
-    makeLabel(rightBg, "Target Player (click from list)", y)
+    makeLabel(rightBg, "Target Player (tap a name on the left)", y)
     y = y + 28
     local walkSlider = makeSlider(rightBg, "WalkSpeed", 8, 200, 16, y)
-    y = y + 62
+    y = y + 64
     local jumpSlider = makeSlider(rightBg, "JumpPower", 25, 300, 50, y)
-    y = y + 62
+    y = y + 64
     local gravitySlider = makeSlider(rightBg, "Gravity", 0, 500, 196, y)
-    y = y + 62
+    y = y + 64
 
     local actionY = y
     local teleportBtn = makeActionButton("Teleport To", actionY, function()
@@ -383,20 +395,26 @@ if isClient then
         if not targetName then return end
         sendAction({ action = "teleport", target = targetName })
     end)
-    local kickBtn = makeActionButton("Kick", actionY + 36, function()
+    local kickBtn = makeActionButton("Kick", actionY + 44, function()
         local targetName = rightBg:GetAttribute("selected")
         if not targetName then return end
         sendAction({ action = "kick", target = targetName, value = "Kicked by admin" })
     end)
-    local giveBtn = makeActionButton("Give TestTool", actionY + 72, function()
+    local giveBtn = makeActionButton("Give TestTool", actionY + 88, function()
         local targetName = rightBg:GetAttribute("selected")
         if not targetName then return end
         sendAction({ action = "giveTool", target = targetName, value = "TestTool" })
     end)
-    local healBtn = makeActionButton("Heal", actionY + 108, function()
+    local healBtn = makeActionButton("Heal", actionY + 132, function()
         local target = rightBg:GetAttribute("selected")
         sendAction({ action = "heal", target = target })
     end)
+
+    -- position action buttons nicer on small widths (two columns if space)
+    teleportBtn.Position = UDim2.new(0,8,0,actionY)
+    kickBtn.Position = UDim2.new(0.5, -6, 0, actionY)
+    giveBtn.Position = UDim2.new(0,8,0,actionY + 44)
+    healBtn.Position = UDim2.new(0.5, -6, 0,actionY + 44)
 
     local function sendWalk(v)
         local target = rightBg:GetAttribute("selected")
@@ -424,11 +442,12 @@ if isClient then
         end
     end)
 
+    -- player list population
     local function addPlayerToList(p)
         local btn = new("TextButton", {
-            Parent = leftScroll, Text = p.Name, Size = UDim2.new(1,-6,0,28),
+            Parent = leftScroll, Text = p.Name, Size = UDim2.new(1,-6,0,36),
             BackgroundColor3 = Color3.fromRGB(25,25,25), TextColor3 = Color3.fromRGB(220,220,220),
-            Font = Enum.Font.Gotham, TextSize = 14,
+            Font = Enum.Font.Gotham, TextSize = 16,
         })
         new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,6)})
         btn.MouseButton1Click:Connect(function()
@@ -449,6 +468,30 @@ if isClient then
         if rightBg:GetAttribute("selected") == pl.Name then rightBg:SetAttribute("selected", nil) end
     end)
 
+    -- Update rightBg size and rightScroll canvas so content is scrollable
+    rightBg.Size = UDim2.new(1,0,0, y + 20)
+    rightScroll.CanvasSize = UDim2.new(0,0,0, y + 30)
+
+    -- mobile-friendly toggle button (visible when touch enabled)
+    if UserInputService.TouchEnabled then
+        local mobileToggle = new("TextButton", {
+            Parent = screenGui, Text = "≡", TextColor3 = Color3.fromRGB(255,255,255),
+            BackgroundColor3 = Color3.fromRGB(30,30,30), Size = UDim2.new(0,56,0,56), Position = UDim2.new(0.03,0,0.88,0),
+            Font = Enum.Font.GothamBold, TextSize = 28, AutoButtonColor = true,
+        })
+        new("UICorner", {Parent=mobileToggle, CornerRadius=UDim.new(0,10)})
+        mobileToggle.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if not isAdminClient() then
+                    warn("mobile: not admin")
+                    return
+                end
+                main.Visible = not main.Visible
+            end
+        end)
+    end
+
+    -- desktop toggle (keyboard)
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.KeyCode == CONFIG.ToggleKey then
@@ -456,10 +499,13 @@ if isClient then
         end
     end)
 
+    -- default slider values
     walkSlider.set(16)
     jumpSlider.set(50)
     gravitySlider.set(196)
-    main.Visible = isAdminClient() -- visible only if allowed (RunForAll true => visible for everyone)
+
+    -- initial visibility
+    main.Visible = isAdminClient()
 
     -- simple note in output
     if canUseRemote() then
