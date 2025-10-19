@@ -1,124 +1,143 @@
---[[ 
-    Brainrot & Base ESP with Draggable UI
-    Place this LocalScript in StarterPlayerScripts.
-    Only works in your own game.
---]]
+-- Brainrot & Base ESP with Draggable UI (Loadable/Executor Version)
+-- You can run this with: loadstring(game:HttpGet("https://raw.githubusercontent.com/fan-star-ketch/ex-pow-hub/main/exhub"))()
+-- If your executor & game allows GUIs, this will work in-game (not just Studio).
 
--- UI Setup
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-
--- Main GUI
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BrainrotESP_UI"
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0, 220, 0, 110)
-Frame.Position = UDim2.new(0, 100, 0, 100)
-Frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
-Frame.BorderSizePixel = 0
-Frame.Active = true
-Frame.Draggable = true
-Frame.Parent = ScreenGui
-
-local Title = Instance.new("TextLabel")
-Title.Text = "Brainrot ESP Menu"
-Title.Size = UDim2.new(1,0,0,30)
-Title.BackgroundTransparency = 1
-Title.TextColor3 = Color3.new(1,1,1)
-Title.Font = Enum.Font.GothamSemibold
-Title.TextSize = 20
-Title.Parent = Frame
-
-local ToggleESP = Instance.new("TextButton")
-ToggleESP.Text = "Enable ESP"
-ToggleESP.Size = UDim2.new(1,-20,0,40)
-ToggleESP.Position = UDim2.new(0,10,0,40)
-ToggleESP.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-ToggleESP.TextColor3 = Color3.new(1,1,1)
-ToggleESP.Font = Enum.Font.Gotham
-ToggleESP.TextSize = 18
-ToggleESP.AutoButtonColor = true
-ToggleESP.Parent = Frame
-
-local ScrollFrame = Instance.new("ScrollingFrame")
-ScrollFrame.Size = UDim2.new(1, -20, 0, 30)
-ScrollFrame.Position = UDim2.new(0, 10, 1, -35)
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 1, 0)
-ScrollFrame.ScrollBarThickness = 6
-ScrollFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-ScrollFrame.BorderSizePixel = 0
-ScrollFrame.Parent = Frame
-
-local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.Parent = ScrollFrame
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- ESP logic
-local espEnabled = false
-local highlights = {}
-
-local function clearESP()
-    for _,h in ipairs(highlights) do
-        if h and h.Parent then
-            h:Destroy()
-        end
+local function brainrotESP()
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    if not LocalPlayer then
+        warn("No LocalPlayer found. Not running as a local script context.")
+        return
     end
-    highlights = {}
-end
 
-local function scanAndHighlight()
-    clearESP()
-    ScrollFrame:ClearAllChildren()
-    UIListLayout.Parent = ScrollFrame -- reparent after clear
-    for _,obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
-            local highlight = Instance.new("Highlight")
-            highlight.Adornee = obj
-            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            highlight.FillColor = obj.Name == "Brainrot" and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0,255,0)
-            highlight.OutlineColor = Color3.new(1,1,1)
-            highlight.Parent = obj
-            table.insert(highlights, highlight)
-
-            -- Add label to scrollframe
-            local label = Instance.new("TextLabel")
-            label.Size = UDim2.new(1,0,0,20)
-            label.BackgroundTransparency = 1
-            label.TextColor3 = highlight.FillColor
-            label.Text = obj.Name.." - "..obj:GetFullName()
-            label.Font = Enum.Font.Gotham
-            label.TextSize = 13
-            label.TextXAlignment = Enum.TextXAlignment.Left
-            label.LayoutOrder = #highlights
-            label.Parent = ScrollFrame
-        end
+    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui",5)
+    if not PlayerGui then
+        warn("PlayerGui not found!")
+        return
     end
-end
 
--- Toggle ESP on/off
-ToggleESP.MouseButton1Click:Connect(function()
-    espEnabled = not espEnabled
-    if espEnabled then
-        scanAndHighlight()
-        ToggleESP.Text = "Disable ESP"
-    else
+    if PlayerGui:FindFirstChild("BrainrotESP_UI") then
+        PlayerGui.BrainrotESP_UI:Destroy()
+    end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "BrainrotESP_UI"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.Parent = PlayerGui
+
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(0, 220, 0, 110)
+    Frame.Position = UDim2.new(0, 100, 0, 100)
+    Frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    Frame.BorderSizePixel = 0
+    Frame.Active = true
+    Frame.Draggable = true
+    Frame.Parent = ScreenGui
+
+    local Title = Instance.new("TextLabel")
+    Title.Text = "Brainrot ESP Menu"
+    Title.Size = UDim2.new(1,0,0,30)
+    Title.BackgroundTransparency = 1
+    Title.TextColor3 = Color3.new(1,1,1)
+    Title.Font = Enum.Font.GothamSemibold
+    Title.TextSize = 20
+    Title.Parent = Frame
+
+    local ToggleESP = Instance.new("TextButton")
+    ToggleESP.Text = "Enable ESP"
+    ToggleESP.Size = UDim2.new(1,-20,0,40)
+    ToggleESP.Position = UDim2.new(0,10,0,40)
+    ToggleESP.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    ToggleESP.TextColor3 = Color3.new(1,1,1)
+    ToggleESP.Font = Enum.Font.Gotham
+    ToggleESP.TextSize = 18
+    ToggleESP.AutoButtonColor = true
+    ToggleESP.Parent = Frame
+
+    local ScrollFrame = Instance.new("ScrollingFrame")
+    ScrollFrame.Size = UDim2.new(1, -20, 0, 30)
+    ScrollFrame.Position = UDim2.new(0, 10, 1, -35)
+    ScrollFrame.CanvasSize = UDim2.new(0, 0, 1, 0)
+    ScrollFrame.ScrollBarThickness = 6
+    ScrollFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    ScrollFrame.BorderSizePixel = 0
+    ScrollFrame.Parent = Frame
+
+    local UIListLayout = Instance.new("UIListLayout")
+    UIListLayout.Parent = ScrollFrame
+    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local espEnabled = false
+    local highlights = {}
+
+    local function clearESP()
+        for _,h in ipairs(highlights) do
+            if h and h.Parent then
+                h:Destroy()
+            end
+        end
+        highlights = {}
+    end
+
+    local function scanAndHighlight()
         clearESP()
-        ScrollFrame:ClearAllChildren()
+        for _,child in ipairs(ScrollFrame:GetChildren()) do
+            if child:IsA("TextLabel") then
+                child:Destroy()
+            end
+        end
         UIListLayout.Parent = ScrollFrame
-        ToggleESP.Text = "Enable ESP"
-    end
-end)
+        for _,obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
+                local highlight = Instance.new("Highlight")
+                highlight.Adornee = obj
+                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                highlight.FillColor = obj.Name == "Brainrot" and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0,255,0)
+                highlight.OutlineColor = Color3.new(1,1,1)
+                highlight.Parent = obj
+                table.insert(highlights, highlight)
 
--- Optional: Auto-update ESP when new objects are added/removed
-workspace.DescendantAdded:Connect(function(obj)
-    if espEnabled and obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
-        scanAndHighlight()
+                local label = Instance.new("TextLabel")
+                label.Size = UDim2.new(1,0,0,20)
+                label.BackgroundTransparency = 1
+                label.TextColor3 = highlight.FillColor
+                label.Text = obj.Name.." - "..obj:GetFullName()
+                label.Font = Enum.Font.Gotham
+                label.TextSize = 13
+                label.TextXAlignment = Enum.TextXAlignment.Left
+                label.LayoutOrder = #highlights
+                label.Parent = ScrollFrame
+            end
+        end
     end
-end)
-workspace.DescendantRemoving:Connect(function(obj)
-    if espEnabled and (obj.Name == "Brainrot" or obj.Name == "Base") then
-        scanAndHighlight()
-    end
-end)
+
+    ToggleESP.MouseButton1Click:Connect(function()
+        espEnabled = not espEnabled
+        if espEnabled then
+            scanAndHighlight()
+            ToggleESP.Text = "Disable ESP"
+        else
+            clearESP()
+            for _,child in ipairs(ScrollFrame:GetChildren()) do
+                if child:IsA("TextLabel") then
+                    child:Destroy()
+                end
+            end
+            UIListLayout.Parent = ScrollFrame
+            ToggleESP.Text = "Enable ESP"
+        end
+    end)
+
+    workspace.DescendantAdded:Connect(function(obj)
+        if espEnabled and obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
+            scanAndHighlight()
+        end
+    end)
+    workspace.DescendantRemoving:Connect(function(obj)
+        if espEnabled and (obj.Name == "Brainrot" or obj.Name == "Base") then
+            scanAndHighlight()
+        end
+    end)
+end
+
+pcall(brainrotESP)
