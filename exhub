@@ -1,168 +1,296 @@
+-- LocalScript (place in StarterPlayer > StarterPlayerScripts)
+-- Purpose: Client-side GUI menu (draggable), scrollable content, Teleport + ESP toggle.
+-- Notes: Designed for use in your own Roblox place (Studio Play). Does NOT support exploit/loadstring injection.
+
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
 local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Create ScreenGui
-local gui = Instance.new("ScreenGui")
-gui.Name = "CustomMenu"
-gui.ResetOnSpawn = false
-gui.Parent = playerGui
-
--- Create main frame
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 300, 0, 400)
-frame.Position = UDim2.new(0.5, -150, 0.5, -200)
-frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
-
--- Title bar
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -30, 0, 40)
-title.Position = UDim2.new(0, 10, 0, 0)
-title.BackgroundTransparency = 1
-title.Font = Enum.Font.GothamBold
-title.Text = "Main Menu"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.TextSize = 18
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = frame
-
--- Close button (X)
-local close = Instance.new("TextButton")
-close.Size = UDim2.new(0, 30, 0, 30)
-close.Position = UDim2.new(1, -35, 0, 5)
-close.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-close.Text = "X"
-close.TextColor3 = Color3.new(1, 1, 1)
-close.TextSize = 18
-close.Font = Enum.Font.GothamBold
-close.Parent = frame
-
--- Scrollable content
-local scrollingFrame = Instance.new("ScrollingFrame")
-scrollingFrame.Size = UDim2.new(1, -20, 1, -60)
-scrollingFrame.Position = UDim2.new(0, 10, 0, 50)
-scrollingFrame.CanvasSize = UDim2.new(0, 0, 2, 0)
-scrollingFrame.ScrollBarThickness = 8
-scrollingFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-scrollingFrame.BorderSizePixel = 0
-scrollingFrame.Parent = frame
-
--- Example content
-for i = 1, 20 do
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -10, 0, 40)
-    btn.Position = UDim2.new(0, 5, 0, (i - 1) * 45)
-    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    btn.Text = "Button " .. i
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.Font = Enum.Font.Gotham
-    btn.TextSize = 14
-    btn.Parent = scrollingFrame
+if not player then
+    warn("LocalScript did not find LocalPlayer. Make sure this is a LocalScript placed in StarterPlayerScripts and run in Play mode.")
+    return
 end
 
--- Teleport + ESP Toggle Feature
-local TeleportAndESP_Enabled = false
-local ESP_GUIs = {}
+local playerGui = player:WaitForChild("PlayerGui")
 
-local function addESP(p)
-    if p == player then return end
-    local head = p.Character and p.Character:FindFirstChild("Head")
-    if head and not head:FindFirstChild("ESP") then
-        local gui = Instance.new("BillboardGui", head)
-        gui.Name = "ESP"
-        gui.Adornee = head
-        gui.Size = UDim2.new(0, 200, 0, 50)
-        gui.StudsOffset = Vector3.new(0, 2, 0)
-        gui.AlwaysOnTop = true
+-- ---------- UI BUILD ----------
+local gui = Instance.new("ScreenGui")
+gui.Name = "CustomMenu"
+gui.Parent = playerGui
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Enabled = true
 
-        local lbl = Instance.new("TextLabel", gui)
-        lbl.Size = UDim2.new(1, 0, 1, 0)
-        lbl.BackgroundTransparency = 1
-        lbl.Font = Enum.Font.SourceSansBold
-        lbl.TextSize = 14
-        lbl.TextColor3 = Color3.new(1, 0, 0)
-        lbl.Text = p.Name
+-- Main frame
+local frame = Instance.new("Frame")
+frame.Name = "MainFrame"
+frame.Size = UDim2.new(0, 340, 0, 480)
+frame.Position = UDim2.new(0.5, -170, 0.5, -240)
+frame.AnchorPoint = Vector2.new(0.5, 0.5)
+frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+frame.BorderSizePixel = 0
+frame.Parent = gui
+frame.Visible = true
+frame.ZIndex = 2
+frame.ClipsDescendants = true
 
-        ESP_GUIs[p] = gui
+-- Styling helper
+local function makeLabel(parent, props)
+    local t = Instance.new("TextLabel")
+    t.BackgroundTransparency = 1
+    for k,v in pairs(props or {}) do t[k] = v end
+    t.Parent = parent
+    return t
+end
+
+-- Title bar (used for dragging)
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundTransparency = 0
+titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = frame
+
+makeLabel(titleBar, {
+    Name = "Title",
+    Size = UDim2.new(1, -60, 1, 0),
+    Position = UDim2.new(0, 10, 0, 0),
+    Font = Enum.Font.GothamBold,
+    Text = "Main Menu",
+    TextColor3 = Color3.fromRGB(230,230,230),
+    TextSize = 18,
+    TextXAlignment = Enum.TextXAlignment.Left
+})
+
+-- Close button
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "Close"
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -36, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+closeBtn.BorderSizePixel = 0
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.TextSize = 16
+closeBtn.Parent = titleBar
+
+-- Content area (scrolling)
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -46)
+contentFrame.Position = UDim2.new(0, 0, 0, 46)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = frame
+
+local scrolling = Instance.new("ScrollingFrame")
+scrolling.Name = "Scroller"
+scrolling.Size = UDim2.new(1, -24, 1, 0)
+scrolling.Position = UDim2.new(0, 12, 0, 0)
+scrolling.CanvasSize = UDim2.new(0, 0, 0, 0) -- will update
+scrolling.ScrollBarThickness = 8
+scrolling.BackgroundColor3 = Color3.fromRGB(36,36,36)
+scrolling.BorderSizePixel = 0
+scrolling.Parent = contentFrame
+scrolling.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local uiList = Instance.new("UIListLayout")
+uiList.SortOrder = Enum.SortOrder.LayoutOrder
+uiList.Padding = UDim.new(0,8)
+uiList.Parent = scrolling
+
+-- Add toggle button (Teleport + ESP)
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(1, 0, 0, 42)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(68, 68, 255)
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.Text = "Enable Teleport + ESP"
+toggleBtn.TextColor3 = Color3.new(1,1,1)
+toggleBtn.TextSize = 16
+toggleBtn.LayoutOrder = 1
+toggleBtn.Parent = scrolling
+
+-- Example additional buttons (demo)
+for i = 2, 10 do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 36)
+    b.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    b.BorderSizePixel = 0
+    b.Font = Enum.Font.Gotham
+    b.Text = "Button " .. i
+    b.TextColor3 = Color3.new(1,1,1)
+    b.TextSize = 14
+    b.LayoutOrder = i
+    b.Parent = scrolling
+end
+
+-- ---------- DRAGGING (robust client-side implementation) ----------
+local dragging = false
+local dragStart = Vector3.new()
+local startPos = UDim2.new()
+
+local function onInputBegan(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
     end
 end
 
-local function removeESP()
-    for p, gui in pairs(ESP_GUIs) do
-        if gui and gui.Parent then
-            gui:Destroy()
+local function onInputChanged(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        local newX = startPos.X.Offset + delta.X
+        local newY = startPos.Y.Offset + delta.Y
+        -- Keep inside screen bounds (approx)
+        local screenW = workspace.CurrentCamera.ViewportSize.X
+        local screenH = workspace.CurrentCamera.ViewportSize.Y
+        newX = math.clamp(newX, -frame.AbsoluteSize.X/2, screenW - frame.AbsoluteSize.X/2)
+        newY = math.clamp(newY, -frame.AbsoluteSize.Y/2, screenH - frame.AbsoluteSize.Y/2)
+        frame.Position = UDim2.new(0, newX, 0, newY)
+    end
+end
+
+titleBar.InputBegan:Connect(onInputBegan)
+UserInputService.InputChanged:Connect(onInputChanged)
+UserInputService.InputBegan:Connect(function(inp)
+    -- also allow starting drag by clicking the title label text
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 and inp.Target and inp.Target:IsDescendantOf(titleBar) then
+        onInputBegan(inp)
+    end
+end)
+
+-- Close button
+closeBtn.MouseButton1Click:Connect(function()
+    gui.Enabled = not gui.Enabled
+end)
+
+-- ---------- TELEPORT + ESP LOGIC ----------
+local TeleportAndESP_Enabled = false
+local ESP_GUIs = {} -- map player -> billboard
+
+local function createESPForCharacter(p)
+    if p == player then return end
+    local char = p.Character
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    if head:FindFirstChild("ESP") then return end
+
+    local guiBill = Instance.new("BillboardGui")
+    guiBill.Name = "ESP"
+    guiBill.Adornee = head
+    guiBill.Size = UDim2.new(0, 160, 0, 40)
+    guiBill.StudsOffset = Vector3.new(0, 1.5, 0)
+    guiBill.AlwaysOnTop = true
+    guiBill.Parent = head
+
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.TextColor3 = Color3.fromRGB(255, 50, 50)
+    label.Text = p.Name
+    label.Parent = guiBill
+
+    ESP_GUIs[p] = guiBill
+end
+
+local function removeAllESP()
+    for p, g in pairs(ESP_GUIs) do
+        if g and g.Parent then
+            g:Destroy()
         end
     end
     ESP_GUIs = {}
 end
 
-local function TeleportAndESP()
-    local char = player.Character or player.CharacterAdded:Wait()
-    local root = char:WaitForChild("HumanoidRootPart")
-
-    -- Teleport above base
-    repeat task.wait() until workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
-    local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
-    if base then
-        local y = base.Position.Y + (base.Size.Y / 2) + 5
-        root.Anchored = true
-        root.CFrame = CFrame.new(base.Position.X, y, base.Position.Z)
-        task.wait(0.5)
-        root.Anchored = false
+local function enableESPForAll()
+    for _, p in pairs(Players:GetPlayers()) do
+        spawn(function()
+            -- wait for character
+            if p.Character then
+                createESPForCharacter(p)
+            end
+            p.CharacterAdded:Connect(function()
+                createESPForCharacter(p)
+            end)
+        end)
     end
 
-    -- ESP for all players
-    for _, p in ipairs(Players:GetPlayers()) do
-        addESP(p)
-    end
-
+    -- new players
     Players.PlayerAdded:Connect(function(p)
         p.CharacterAdded:Connect(function()
-            addESP(p)
+            createESPForCharacter(p)
         end)
     end)
 end
 
-local function ToggleTeleportAndESP(toggleBtn)
+local function teleportToBase()
+    -- safe-search: Base OR Baseplate OR Workspace SpawnLocation
+    local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate") or workspace:FindFirstChildOfClass("SpawnLocation")
+    if not base then
+        -- try searching anywhere for a part named Base
+        base = workspace:FindFirstChild("Base", true)
+    end
+    if not base then
+        warn("Teleport aborted: no Base, Baseplate or SpawnLocation found in workspace.")
+        return
+    end
+
+    local char = player.Character
+    if not char then warn("Teleport aborted: character missing.") return end
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRoot") 
+    if not root then warn("Teleport aborted: no HumanoidRootPart found.") return end
+
+    -- compute safe Y above the base
+    local y = base.Position.Y + (base.Size.Y / 2) + 6
+    local target = CFrame.new(base.Position.X, y, base.Position.Z)
+    -- Teleport politely (non-anchored)
+    root.CFrame = target
+end
+
+local function ToggleTeleportAndESP()
     TeleportAndESP_Enabled = not TeleportAndESP_Enabled
     if TeleportAndESP_Enabled then
-        TeleportAndESP()
+        teleportToBase()
+        enableESPForAll()
         toggleBtn.Text = "Disable Teleport + ESP"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 255, 60)
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(80, 220, 90)
     else
-        removeESP()
+        removeAllESP()
         toggleBtn.Text = "Enable Teleport + ESP"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 255)
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(68, 68, 255)
     end
 end
 
--- Add toggle button to the top of the menu
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(1, -10, 0, 40)
-toggleBtn.Position = UDim2.new(0, 5, 0, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 255)
-toggleBtn.Text = "Enable Teleport + ESP"
-toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 16
-toggleBtn.Parent = scrollingFrame
+toggleBtn.MouseButton1Click:Connect(ToggleTeleportAndESP)
 
-toggleBtn.MouseButton1Click:Connect(function()
-    ToggleTeleportAndESP(toggleBtn)
+-- Make sure characters that spawn later get ESP toggled if enabled
+Players.PlayerAdded:Connect(function(p)
+    if TeleportAndESP_Enabled then
+        p.CharacterAdded:Connect(function() createESPForCharacter(p) end)
+    end
 end)
 
--- Move other example buttons down
-for i, btn in ipairs(scrollingFrame:GetChildren()) do
-    if btn ~= toggleBtn and btn:IsA("TextButton") then
-        btn.Position = btn.Position + UDim2.new(0, 0, 0, 45)
-    end
-end
+-- ---------- DEBUG HELPERS ----------
+-- Use these prints in Studio output if things look off
+print("CustomMenu LocalScript initialized for player:", player.Name)
 
--- Close button logic
-close.MouseButton1Click:Connect(function()
-    gui.Enabled = not gui.Enabled
+-- Optional: center the UI on viewport resize
+RunService.RenderStepped:Connect(function()
+    local camSize = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(0,0)
+    -- keep inside bounds even if resolution changes
+    local fw = math.clamp(frame.Position.X.Offset, -frame.AbsoluteSize.X/2, camSize.X - frame.AbsoluteSize.X/2)
+    local fh = math.clamp(frame.Position.Y.Offset, -frame.AbsoluteSize.Y/2, camSize.Y - frame.AbsoluteSize.Y/2)
+    frame.Position = UDim2.new(0, fw, 0, fh)
 end)
