@@ -6,16 +6,18 @@
 --  - Or simply run loadstring(<this file text>)() in supported environments.
 --
 -- Changes in this version:
---  - Fixed scrolling issues by using UIListLayout + CanvasSize binding for both columns.
---  - Reworked UI: modern look, icons+colors, search, categories on the left, content on the right.
---  - Clickable categories to organize commands (Movement, Character, Tools, World, Camera, Utilities, Local Hacks).
---  - Added 30+ features (mix of server-safe self-only actions and client-local features).
---  - Better input handling and robust fallbacks when RemoteEvent missing.
+--  - Draggable window (desktop & touch) with snap/center controls.
+--  - Edge "X" unload button to cleanly remove the UI and stop all client behaviors.
+--  - Fixed slider bug and many connection/disconnect issues.
+--  - Improved connection tracking and safe cleanup on unload.
+--  - Better input handling, robust fallbacks when RemoteEvent missing.
+--  - Minor quality-of-life features: minimize, center, lock position, version label.
 --
 -- Security model:
 --  - Server handlers only operate on the calling player (self-only) and require admin check if RunForAll=false.
 --  - Client can optionally fall back to local-only operations when the RemoteEvent is missing and AllowClientFallback=true.
 --
+
 local CONFIG = {
     RunForAll = true,              -- true: everyone can use the menu. false: only AdminUserIds
     AdminUserIds = { 0 },          -- list of allowed admin UserIds when RunForAll = false
@@ -23,6 +25,7 @@ local CONFIG = {
     RemoteEventName = "ModMenuAction",     -- RemoteEvent name in ReplicatedStorage
     AllowClientFallback = true,    -- if RemoteEvent missing on client, do limited local-only actions
     FillScreenPercent = 0.88,      -- size multiplier for screen gui main window
+    Version = "v2.0.0",
 }
 
 local RunService = game:GetService("RunService")
@@ -237,6 +240,7 @@ end
 -- CLIENT: create UI and local behavior (self-only)
 if isClient then
     local player = Players.LocalPlayer
+    if not player then return end
 
     -- Try to find RemoteEvent (no WaitForChild to allow fallback)
     local event = ReplicatedStorage:FindFirstChild(CONFIG.RemoteEventName)
@@ -250,6 +254,27 @@ if isClient then
     local function canUseRemote()
         return event ~= nil
     end
+
+    -- connection tracking for cleanup
+    local trackedConns = {}
+    local function trackConn(conn)
+        if conn then table.insert(trackedConns, conn) end
+        return conn
+    end
+    local function safeDisconnect(conn)
+        if not conn then return end
+        local ok, _ = pcall(function() conn:Disconnect() end)
+        return ok
+    end
+    local function disconnectAll()
+        for _, c in ipairs(trackedConns) do
+            pcall(function() c:Disconnect() end)
+        end
+        trackedConns = {}
+    end
+
+    -- internal state
+    local loaded = true
 
     -- Fallback local action handler (limited and client-side only)
     local function localHandleAction(payload)
@@ -372,16 +397,16 @@ if isClient then
     screenGui.IgnoreGuiInset = true
     screenGui.Parent = player:WaitForChild("PlayerGui")
 
-    -- Main window (centered)
+    -- Main window (we use offset positioning to make dragging straightforward)
     local main = new("Frame", {
         Name = "MainWindow",
         Parent = screenGui,
         Size = UDim2.new(CONFIG.FillScreenPercent, 0, 0.78, 0),
-        Position = UDim2.new(0.5, 0, 0.08, 0),
+        Position = UDim2.new(0.08, 0, 0.08, 0), -- temporary; we'll center after size known
         BackgroundColor3 = Color3.fromRGB(18, 22, 30),
         BorderSizePixel = 0,
     })
-    main.AnchorPoint = Vector2.new(0.5,0)
+    main.AnchorPoint = Vector2.new(0,0)
     new("UICorner", {Parent=main, CornerRadius=UDim.new(0,10)})
     local sizeConstraint = new("UISizeConstraint", { Parent = main })
     sizeConstraint.MaxSize = Vector2.new(1200, 900)
@@ -394,20 +419,74 @@ if isClient then
     local header = new("Frame", { Parent = main, Size = UDim2.new(1,0,0,52), BackgroundTransparency = 1 })
     local title = new("TextLabel", {
         Parent = header, Text = "ExHub - Self Menu", TextColor3 = Color3.fromRGB(240,240,240),
-        Font = Enum.Font.GothamBold, TextSize = 20, BackgroundTransparency = 1,
-        Position = UDim2.new(0,16,0,10), Size = UDim2.new(0.6,0,1,0),
+        Font = Enum.Font.GothamBold, TextSize = 18, BackgroundTransparency = 1,
+        Position = UDim2.new(0,16,0,6), Size = UDim2.new(0.6,0,1,0),
     })
     local subtitle = new("TextLabel", {
-        Parent = header, Text = "Organized • Safe • Self-only", TextColor3 = Color3.fromRGB(170,170,170),
-        Font = Enum.Font.Gotham, TextSize = 12, BackgroundTransparency = 1,
-        Position = UDim2.new(0,16,0,30), Size = UDim2.new(0.6,0,1,0),
+        Parent = header, Text = "Organized • Safe • Self-only • " .. CONFIG.Version, TextColor3 = Color3.fromRGB(170,170,170),
+        Font = Enum.Font.Gotham, TextSize = 11, BackgroundTransparency = 1,
+        Position = UDim2.new(0,16,0,28), Size = UDim2.new(0.6,0,1,0),
     })
+
+    -- close (minimize) button inside header
     local closeBtn = new("TextButton", {
-        Parent = header, Text = "✕", TextColor3 = Color3.fromRGB(200,200,200),
-        BackgroundTransparency = 1, Position = UDim2.new(1,-56,0,8), Size = UDim2.new(0,48,0,36),
-        Font = Enum.Font.GothamBold, TextSize = 18,
+        Parent = header, Text = "—", TextColor3 = Color3.fromRGB(200,200,200),
+        BackgroundTransparency = 1, Position = UDim2.new(1,-110,0,8), Size = UDim2.new(0,48,0,36),
+        Font = Enum.Font.GothamBold, TextSize = 20,
     })
     closeBtn.MouseButton1Click:Connect(function() main.Visible = false end)
+
+    -- center and lock buttons
+    local centerBtn = new("TextButton", {
+        Parent = header, Text = "◎", TextColor3 = Color3.fromRGB(200,200,200),
+        BackgroundTransparency = 1, Position = UDim2.new(1,-160,0,8), Size = UDim2.new(0,48,0,36),
+        Font = Enum.Font.GothamBold, TextSize = 18,
+    })
+    centerBtn.MouseButton1Click:Connect(function()
+        -- center the window smoothly
+        local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280,720)
+        local newX = math.max(10, math.floor((viewport.X - main.AbsoluteSize.X)/2))
+        local newY = math.max(10, math.floor(viewport.Y * 0.08))
+        pcall(function()
+            TweenService:Create(main, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0, newX, 0, newY)}):Play()
+        end)
+    end)
+
+    local lockPos = false
+    local lockBtn = new("TextButton", {
+        Parent = header, Text = "🔒", TextColor3 = Color3.fromRGB(200,200,200),
+        BackgroundTransparency = 1, Position = UDim2.new(1,-210,0,8), Size = UDim2.new(0,48,0,36),
+        Font = Enum.Font.GothamBold, TextSize = 16,
+    })
+    lockBtn.MouseButton1Click:Connect(function()
+        lockPos = not lockPos
+        lockBtn.Text = lockPos and "🔓" or "🔒"
+        lockBtn.TextColor3 = lockPos and Color3.fromRGB(120,220,120) or Color3.fromRGB(200,200,200)
+    end)
+
+    -- edge unload "X" button (always visible)
+    local unloadEdge = new("TextButton", {
+        Parent = screenGui, Text = "✕", TextColor3 = Color3.fromRGB(255,255,255),
+        BackgroundColor3 = Color3.fromRGB(30,30,30), Size = UDim2.new(0,36,0,36), Position = UDim2.new(1,-44,0.02,0),
+        Font = Enum.Font.GothamBold, TextSize = 20, AutoButtonColor = true,
+    })
+    new("UICorner", {Parent=unloadEdge, CornerRadius = UDim.new(0,8)})
+    local function unloadAll()
+        if not loaded then return end
+        loaded = false
+        -- stop local features
+        pcall(function() setNoclip(false) end)
+        pcall(function() stopFly() end)
+        pcall(function() setGod(false) end)
+        -- disconnect tracked connections
+        disconnectAll()
+        -- destroy UI
+        pcall(function() screenGui:Destroy() end)
+        print("[exhub] Unloaded.")
+    end
+    unloadEdge.MouseButton1Click:Connect(function()
+        unloadAll()
+    end)
 
     -- search box
     local searchBox = new("TextBox", {
@@ -429,9 +508,9 @@ if isClient then
     })
     local leftList = new("UIListLayout", {Parent = leftScroll, Padding = UDim.new(0,8)})
     leftList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    leftList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    trackConn(leftList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
         leftScroll.CanvasSize = UDim2.new(0,0,0,leftList.AbsoluteContentSize.Y + 12)
-    end)
+    end))
 
     -- right content
     local right = new("Frame", { Parent = main, Size = UDim2.new(0.76, -12, 1, -72), Position = UDim2.new(0.24, 8, 0, 60), BackgroundTransparency = 1 })
@@ -442,9 +521,9 @@ if isClient then
         BackgroundTransparency = 1, CanvasSize = UDim2.new(0,0,0,0), ScrollBarThickness = 10, VerticalScrollBarInset = Enum.ScrollBarInset.Always,
     })
     local rightList = new("UIListLayout", {Parent = rightScroll, Padding = UDim.new(0,12)})
-    rightList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    trackConn(rightList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
         rightScroll.CanvasSize = UDim2.new(0,0,0,rightList.AbsoluteContentSize.Y + 16)
-    end)
+    end))
 
     -- helpers for building controls inside a content container (parent should be rightScroll)
     local function makeLabel(parent, text)
@@ -472,7 +551,7 @@ if isClient then
             Font = Enum.Font.GothamBold, TextSize = 14,
         })
         new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,6)})
-        btn.MouseButton1Click:Connect(function() pcall(callback) end)
+        trackConn(btn.MouseButton1Click:Connect(function() if callback then pcall(callback) end end))
         return frame, btn
     end
 
@@ -486,12 +565,12 @@ if isClient then
             Font = Enum.Font.GothamBold, TextSize = 13 })
         new("UICorner", {Parent=toggle, CornerRadius=UDim.new(0,6)})
         local state = default and true or false
-        toggle.MouseButton1Click:Connect(function()
+        trackConn(toggle.MouseButton1Click:Connect(function()
             state = not state
             toggle.Text = state and "ON" or "OFF"
             toggle.BackgroundColor3 = state and Color3.fromRGB(34,139,34) or Color3.fromRGB(120,30,30)
             if onToggle then pcall(onToggle, state) end
-        end)
+        end))
         return frame, toggle
     end
 
@@ -500,31 +579,39 @@ if isClient then
         makeSmallLabel(container, label)
         local barBg = new("Frame", {Parent = container, Size = UDim2.new(1, -120, 0, 18), Position = UDim2.new(0,8,0,26), BackgroundColor3 = Color3.fromRGB(36,36,36)})
         new("UICorner", {Parent=barBg, CornerRadius=UDim.new(0,6)})
-        local fill = new("Frame", {Parent = barBg, Size = UDim2.new(((default-min)/(max-min)),0,1,0), BackgroundColor3 = Color3.fromRGB(60,150,200)})
+        local relDefault = 0
+        if max > min then relDefault = (default - min) / (max - min) end
+        local fill = new("Frame", {Parent = barBg, Size = UDim2.new(math.clamp(relDefault,0,1),0,1,0), BackgroundColor3 = Color3.fromRGB(60,150,200)})
         new("UICorner", {Parent=fill, CornerRadius=UDim.new(0,6)})
-        local valueLabel = new("TextLabel", { Parent = container, Text = tostring(default), BackgroundTransparency = 1, Size = UDim2.new(0,96,0,18), Position = UDim2.new(1,-100,0,24), TextColor3 = Color3.fromRGB(220,220,220), Font = Enum.Font.GothamBold, TextSize = 14 })
+        local valueLabel = new("TextLabel", { Parent = container, Text = tostring(default), BackgroundTransparency = 1, Size = UDim2.new(0,96,0,18), Position = UDim2.new(1,-100,0,24), TextColor3 = Color3.fromRGB(220,220,220), Font = Enum.Font.GothamBold, TextSize = 12 })
         local dragging = false
-        barBg.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true end
-        end)
-        barBg.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
-        end)
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        trackConn(barBg.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+            end
+        end))
+        trackConn(barBg.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end))
+        trackConn(UserInputService.InputChanged:Connect(function(input)
+            if not dragging then return end
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
                 local rel = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / math.max(barBg.AbsoluteSize.X, 1), 0, 1)
                 fill.Size = UDim2.new(rel,0,1,0)
                 local value = math.floor((min + (max-min)*rel) * 100) / 100
                 valueLabel.Text = tostring(value)
                 if onChange then pcall(onChange, value) end
             end
-        end)
+        end))
         -- setter
         local function set(v)
             v = tonumber(v) or default
-            local rel = (v - min) / math.max((max-min),1)
+            local rel = 0
+            if max > min then rel = (v - min) / math.max((max-min),1) end
             fill:TweenSize(UDim2.new(math.clamp(rel,0,1),0,1,0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.12, true)
-            valueLabel.Text = tostring(math.floor(v*100)/100)
+            valueLabel.Text = tostring(math.floor(tonumber(v or default)*100)/100)
             if onChange then pcall(onChange, tonumber(valueLabel.Text)) end
         end
         set(default)
@@ -545,18 +632,15 @@ if isClient then
         local char = player.Character
         if not char then return end
         if state then
-            -- set CanCollide false and keep it false
-            noclipConn = RunService.Stepped:Connect(function()
-                if not noclipState or not player.Character then
-                    if noclipConn and noclipConn.Disconnect then noclipConn:Disconnect() end
-                    return
-                end
+            if noclipConn then safeDisconnect(noclipConn) end
+            noclipConn = trackConn(RunService.Stepped:Connect(function()
+                if not noclipState or not player.Character then return end
                 for _, p in ipairs(player.Character:GetDescendants()) do
                     if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
                 end
-            end)
+            end))
         else
-            if noclipConn and noclipConn.Disconnect then noclipConn:Disconnect() end
+            if noclipConn then safeDisconnect(noclipConn); noclipConn = nil end
             if player.Character then
                 for _, p in ipairs(player.Character:GetDescendants()) do
                     if p:IsA("BasePart") then p.CanCollide = true end
@@ -583,7 +667,7 @@ if isClient then
         flyGyro.Parent = hrp
         flyMoveVec = Vector3.new(0,0,0)
         -- key connections
-        local conn1 = UserInputService.InputBegan:Connect(function(input, gp)
+        local conn1 = trackConn(UserInputService.InputBegan:Connect(function(input, gp)
             if gp then return end
             if input.KeyCode == Enum.KeyCode.W then flyMoveVec = Vector3.new(flyMoveVec.X, flyMoveVec.Y, -1) end
             if input.KeyCode == Enum.KeyCode.S then flyMoveVec = Vector3.new(flyMoveVec.X, flyMoveVec.Y, 1) end
@@ -591,17 +675,17 @@ if isClient then
             if input.KeyCode == Enum.KeyCode.D then flyMoveVec = Vector3.new(1, flyMoveVec.Y, flyMoveVec.Z) end
             if input.KeyCode == Enum.KeyCode.Space then flyMoveVec = Vector3.new(flyMoveVec.X, 1, flyMoveVec.Z) end
             if input.KeyCode == Enum.KeyCode.LeftShift then flyMoveVec = Vector3.new(flyMoveVec.X, -1, flyMoveVec.Z) end
-        end)
-        local conn2 = UserInputService.InputEnded:Connect(function(input, gp)
+        end))
+        local conn2 = trackConn(UserInputService.InputEnded:Connect(function(input, gp)
             if gp then return end
             if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.S then flyMoveVec = Vector3.new(flyMoveVec.X, flyMoveVec.Y, 0) end
             if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.D then flyMoveVec = Vector3.new(0, flyMoveVec.Y, flyMoveVec.Z) end
             if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.LeftShift then flyMoveVec = Vector3.new(flyMoveVec.X, 0, flyMoveVec.Z) end
-        end)
+        end))
         table.insert(flyConnections, conn1)
         table.insert(flyConnections, conn2)
 
-        local conn3 = RunService.RenderStepped:Connect(function()
+        local conn3 = trackConn(RunService.RenderStepped:Connect(function()
             local cam = workspace.CurrentCamera
             if not cam or not hrp then return end
             local look = cam.CFrame - cam.CFrame.Position
@@ -612,21 +696,22 @@ if isClient then
             local vel = (forward * flyMoveVec.Z + right * flyMoveVec.X + up * flyMoveVec.Y) * moveSpeed
             if flyForce then flyForce.Velocity = vel end
             if flyGyro then flyGyro.CFrame = CFrame.new(hrp.Position, hrp.Position + cam.CFrame.LookVector) end
-        end)
+        end))
         table.insert(flyConnections, conn3)
     end
 
     local function stopFly()
         for _, c in ipairs(flyConnections) do
-            if c and c.Disconnect then c:Disconnect() end
+            if c then pcall(function() c:Disconnect() end) end
         end
         flyConnections = {}
-        if flyForce then flyForce:Destroy(); flyForce = nil end
-        if flyGyro then flyGyro:Destroy(); flyGyro = nil end
+        if flyForce then pcall(function() flyForce:Destroy() end) end
+        if flyGyro then pcall(function() flyGyro:Destroy() end) end
+        flyForce, flyGyro = nil, nil
     end
 
     -- infinite jump
-    UserInputService.JumpRequest:Connect(function()
+    trackConn(UserInputService.JumpRequest:Connect(function()
         if infJumpState and player.Character then
             local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
             if humanoid then
@@ -634,22 +719,22 @@ if isClient then
                 humanoid.Jump = true
             end
         end
-    end)
+    end))
 
     -- GOD mode auto-heal
     local godConn
     local function setGod(state)
         godState = state
         if state then
-            if godConn and godConn.Disconnect then godConn:Disconnect() end
-            godConn = RunService.Heartbeat:Connect(function()
+            if godConn then safeDisconnect(godConn) end
+            godConn = trackConn(RunService.Heartbeat:Connect(function()
                 local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
                 if h and h.Health and h.MaxHealth and h.Health < h.MaxHealth then
                     h.Health = h.MaxHealth
                 end
-            end)
+            end))
         else
-            if godConn and godConn.Disconnect then godConn:Disconnect() end
+            if godConn then safeDisconnect(godConn); godConn = nil end
         end
     end
 
@@ -660,7 +745,7 @@ if isClient then
     local function clearRight()
         -- destroy children created for a category, keep UIListLayout intact
         for _, child in ipairs(rightScroll:GetChildren()) do
-            if not child:IsA("UIListLayout") and child ~= rightList then
+            if not child:IsA("UIListLayout") then
                 child:Destroy()
             end
         end
@@ -686,7 +771,7 @@ if isClient then
             Font = Enum.Font.GothamBold, TextSize = 14, AutoButtonColor = true,
         })
         new("UICorner", {Parent=btn, CornerRadius=UDim.new(0,8)})
-        btn.MouseButton1Click:Connect(function()
+        trackConn(btn.MouseButton1Click:Connect(function()
             -- deselect others
             for _, c in ipairs(leftScroll:GetChildren()) do
                 if c:IsA("TextButton") then c.BackgroundColor3 = Color3.fromRGB(32,36,44) end
@@ -695,16 +780,16 @@ if isClient then
             clearRight()
             currentCategory = name
             builder(rightScroll)
-        end)
+        end))
         table.insert(categories, {name = name, button = btn, builder = builder})
     end
 
     -- Movement category
     addCategory("Movement", function(parent)
         makeLabel(parent, "Movement Controls")
-        local walkContainer, walkSet = makeSlider(parent, "WalkSpeed", 0, 500, 16, function(v) createAction("setWalkSpeed", {value=v})(v) end)
-        local jumpContainer, jumpSet = makeSlider(parent, "JumpPower", 0, 500, 50, function(v) createAction("setJumpPower")(v) end)
-        local gravityContainer, gravitySet = makeSlider(parent, "Gravity (world)", 0, 1000, Workspace.Gravity or 196, function(v) createAction("setGravity")(v) end)
+        local _, walkSet = makeSlider(parent, "WalkSpeed", 0, 500, 16, function(v) sendAction({ action = "setWalkSpeed", value = v }) end)
+        local _, jumpSet = makeSlider(parent, "JumpPower", 0, 500, 50, function(v) sendAction({ action = "setJumpPower", value = v }) end)
+        local _, gravitySet = makeSlider(parent, "Gravity (world)", 0, 1000, Workspace.Gravity or 196, function(v) sendAction({ action = "setGravity", value = v }) end)
         makeButton(parent, "Teleport To Mouse", function()
             local mouse = player:GetMouse()
             local pos = mouse and mouse.Hit and mouse.Hit.Position
@@ -736,13 +821,13 @@ if isClient then
     -- Character category
     addCategory("Character", function(parent)
         makeLabel(parent, "Character Modifiers")
-        local maxHealthContainer, maxHealthSet = makeSlider(parent, "MaxHealth", 1, 5000, 100, function(v) sendAction({ action = "setMaxHealth", value = v }) end)
+        local _, maxHealthSet = makeSlider(parent, "MaxHealth", 1, 5000, 100, function(v) sendAction({ action = "setMaxHealth", value = v }) end)
         makeButton(parent, "Heal (Full)", function() sendAction({ action = "heal" }) end)
         makeButton(parent, "Give Tool: TestTool", function() sendAction({ action = "giveTool", value = "TestTool" }) end)
         makeButton(parent, "Remove All Tools", function() sendAction({ action = "removeTools" }) end, Color3.fromRGB(180,60,60))
         makeButton(parent, "Anchored: ON (makes character immobile)", function() sendAction({ action = "setAnchored", value = true }) end, Color3.fromRGB(180,180,60))
         makeButton(parent, "Anchored: OFF", function() sendAction({ action = "setAnchored", value = false }) end, Color3.fromRGB(60,180,60))
-        local transContainer, transSet = makeSlider(parent, "Character Transparency (0-1)", 0, 1, 0, function(v) sendAction({ action = "setTransparency", value = v }) end)
+        local _, transSet = makeSlider(parent, "Character Transparency (0-1)", 0, 1, 0, function(v) sendAction({ action = "setTransparency", value = v }) end)
         makeButton(parent, "Sit", function()
             local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
             if humanoid then humanoid.Sit = true end
@@ -771,7 +856,9 @@ if isClient then
             if backpack then
                 for _, item in ipairs(backpack:GetChildren()) do
                     if item:IsA("Tool") then
-                        player.Character.Humanoid:EquipTool(item)
+                        if player.Character and player.Character:FindFirstChildOfClass("Humanoid") then
+                            pcall(function() player.Character:FindFirstChildOfClass("Humanoid"):EquipTool(item) end)
+                        end
                         break
                     end
                 end
@@ -782,9 +869,9 @@ if isClient then
     -- World category
     addCategory("World", function(parent)
         makeLabel(parent, "World / Server settings (self-only where relevant)")
-        local gravityContainer = makeSlider(parent, "Gravity (world)", 0, 1000, Workspace.Gravity or 196, function(v) sendAction({ action = "setGravity", value = v }) end)
-        makeButton(parent, "Toggle Gravity Low (50)", function() sendAction({ action = "setGravity", value = 50 }) end, Color3.fromRGB(80,140,200))
-        makeButton(parent, "Toggle Gravity Normal (196)", function() sendAction({ action = "setGravity", value = 196 }) end, Color3.fromRGB(80,200,140))
+        local _, gravitySet = makeSlider(parent, "Gravity (world)", 0, 1000, Workspace.Gravity or 196, function(v) sendAction({ action = "setGravity", value = v }) end)
+        makeButton(parent, "Gravity Low (50)", function() sendAction({ action = "setGravity", value = 50 }) end, Color3.fromRGB(80,140,200))
+        makeButton(parent, "Gravity Normal (196)", function() sendAction({ action = "setGravity", value = 196 }) end, Color3.fromRGB(80,200,140))
         makeButton(parent, "Print Nearby Objects", function()
             local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
@@ -802,10 +889,10 @@ if isClient then
     -- Camera category
     addCategory("Camera", function(parent)
         makeLabel(parent, "Camera / View")
-        makeButton(parent, "Set FOV: 70", function() workspace.CurrentCamera.FieldOfView = 70 end)
-        makeButton(parent, "Set FOV: 90", function() workspace.CurrentCamera.FieldOfView = 90 end)
-        makeButton(parent, "Set FOV: 120", function() workspace.CurrentCamera.FieldOfView = 120 end)
-        makeButton(parent, "Reset FOV", function() workspace.CurrentCamera.FieldOfView = 70 end)
+        makeButton(parent, "Set FOV: 70", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 70 end end)
+        makeButton(parent, "Set FOV: 90", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 90 end end)
+        makeButton(parent, "Set FOV: 120", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 120 end end)
+        makeButton(parent, "Reset FOV", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 70 end end)
         makeButton(parent, "Lock Camera to Character", function()
             local cam = workspace.CurrentCamera
             cam.CameraSubject = player.Character
@@ -895,16 +982,16 @@ if isClient then
     end
 
     -- search behavior: simple substring filter on buttons
-    searchBox.Changed:Connect(function()
+    trackConn(searchBox.Changed:Connect(function()
         local text = tostring(searchBox.Text):lower()
         for _, c in ipairs(categories) do
             local visible = text == "" or c.name:lower():find(text)
             c.button.Visible = visible
         end
-    end)
+    end))
 
     -- desktop toggle (keyboard)
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    trackConn(UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.KeyCode == CONFIG.ToggleKey then
             if not isAdminClient() then
@@ -913,7 +1000,7 @@ if isClient then
             end
             main.Visible = not main.Visible
         end
-    end)
+    end))
 
     -- mobile-friendly toggle
     if UserInputService.TouchEnabled then
@@ -923,7 +1010,7 @@ if isClient then
             Font = Enum.Font.GothamBold, TextSize = 28, AutoButtonColor = true,
         })
         new("UICorner", {Parent=mobileToggle, CornerRadius=UDim.new(0,10)})
-        mobileToggle.InputBegan:Connect(function(input)
+        trackConn(mobileToggle.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
                 if not isAdminClient() then
                     warn("mobile: not admin")
@@ -931,7 +1018,7 @@ if isClient then
                 end
                 main.Visible = not main.Visible
             end
-        end)
+        end))
     end
 
     -- default visibility
@@ -945,20 +1032,80 @@ if isClient then
     end
 
     -- ensure character handlers reapply states on respawn
-    player.CharacterAdded:Connect(function(char)
+    trackConn(player.CharacterAdded:Connect(function(char)
         -- reapply noclip if enabled
         if noclipState then setNoclip(true) end
         if flyState then startFly() end
         if godState then setGod(true) end
-    end)
+    end))
 
-    -- lightweight heartbeat: push important values periodically (walk/jump/gravity/maxHP)
+    -- lightweight heartbeat: kept for future improvements
     spawn(function()
-        local lastW, lastJ, lastG, lastH = nil, nil, nil, nil
-        while true do
+        while loaded do
             wait(0.5)
-            -- try to sample UI sliders by searching rightScroll children with TextLabel matching names (best-effort)
-            -- NOTE: this is a fallback; most slider callbacks send actions immediately when changed.
+            -- left as a placeholder to sync values if desired
         end
     end)
+
+    -- Make window draggable (mouse & touch)
+    do
+        local dragging = false
+        local dragStart = Vector2.new()
+        local startPos = Vector2.new()
+        local function onInputBegan(input)
+            if lockPos then return end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                local mousePos = input.Position
+                local absPos = main.AbsolutePosition
+                local absSize = main.AbsoluteSize
+                -- start dragging only if clicking header area
+                local headerAbsPos = header.AbsolutePosition
+                local headerAbsSize = header.AbsoluteSize
+                if mousePos.X >= headerAbsPos.X and mousePos.X <= headerAbsPos.X + headerAbsSize.X and
+                   mousePos.Y >= headerAbsPos.Y and mousePos.Y <= headerAbsPos.Y + headerAbsSize.Y then
+                    dragging = true
+                    dragStart = mousePos
+                    startPos = Vector2.new(absPos.X, absPos.Y)
+                end
+            end
+        end
+        local function onInputChanged(input)
+            if not dragging then return end
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                local delta = input.Position - dragStart
+                local newX = math.clamp(startPos.X + delta.X, 8, (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.X or 1920) - main.AbsoluteSize.X - 8)
+                local newY = math.clamp(startPos.Y + delta.Y, 8, (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y or 1080) - main.AbsoluteSize.Y - 8)
+                main.Position = UDim2.new(0, newX, 0, newY)
+            end
+        end
+        local function onInputEnded(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end
+        trackConn(UserInputService.InputBegan:Connect(onInputBegan))
+        trackConn(UserInputService.InputChanged:Connect(onInputChanged))
+        trackConn(UserInputService.InputEnded:Connect(onInputEnded))
+
+        -- center the window properly once sizes are known
+        spawn(function()
+            for i=1,60 do
+                wait(0.02)
+                if main.AbsoluteSize.X > 10 then break end
+            end
+            local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280,720)
+            local newX = math.max(8, math.floor((vp.X - main.AbsoluteSize.X)/2))
+            local newY = math.max(8, math.floor(vp.Y * 0.08))
+            main.Position = UDim2.new(0, newX, 0, newY)
+        end)
+    end
+
+    -- ensure we can gracefully unload via global (useful for reloading scripts)
+    if _G and _G.ExHubUnload then
+        -- If previous loader exposed unload, call it before replacing
+        pcall(function() _G.ExHubUnload() end)
+    end
+    _G.ExHubUnload = unloadAll
+
+    -- done
 end
