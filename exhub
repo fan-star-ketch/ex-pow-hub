@@ -1,203 +1,124 @@
--- FULLY MOBILE-FRIENDLY, AUTO-SCALING CUSTOM MENU
--- Place in StarterPlayerScripts or StarterGui as a LocalScript
+--[[ 
+    Brainrot & Base ESP with Draggable UI
+    Place this LocalScript in StarterPlayerScripts.
+    Only works in your own game.
+--]]
 
+-- UI Setup
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local LocalPlayer = Players.LocalPlayer
 
--- ---------- GUI ----------
-local gui = Instance.new("ScreenGui")
-gui.Name = "CustomMenu"
-gui.IgnoreGuiInset = true
-gui.ResetOnSpawn = true
-gui.Parent = playerGui
-gui.Enabled = true
+-- Main GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BrainrotESP_UI"
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0.8,0,0.6,0) -- auto-scaling relative
-frame.Position = UDim2.new(0.5,0,0.5,0)
-frame.AnchorPoint = Vector2.new(0.5,0.5)
-frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
-frame.BorderSizePixel = 0
-frame.ClipsDescendants = true
-frame.Parent = gui
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 220, 0, 110)
+Frame.Position = UDim2.new(0, 100, 0, 100)
+Frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
+Frame.BorderSizePixel = 0
+Frame.Active = true
+Frame.Draggable = true
+Frame.Parent = ScreenGui
 
--- Title bar
-local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1,0,0,36)
-titleBar.BackgroundColor3 = Color3.fromRGB(20,20,20)
-titleBar.Parent = frame
+local Title = Instance.new("TextLabel")
+Title.Text = "Brainrot ESP Menu"
+Title.Size = UDim2.new(1,0,0,30)
+Title.BackgroundTransparency = 1
+Title.TextColor3 = Color3.new(1,1,1)
+Title.Font = Enum.Font.GothamSemibold
+Title.TextSize = 20
+Title.Parent = Frame
 
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1,-60,1,0)
-titleLabel.Position = UDim2.new(0,10,0,0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Main Menu"
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 18
-titleLabel.TextColor3 = Color3.fromRGB(230,230,230)
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.Parent = titleBar
+local ToggleESP = Instance.new("TextButton")
+ToggleESP.Text = "Enable ESP"
+ToggleESP.Size = UDim2.new(1,-20,0,40)
+ToggleESP.Position = UDim2.new(0,10,0,40)
+ToggleESP.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+ToggleESP.TextColor3 = Color3.new(1,1,1)
+ToggleESP.Font = Enum.Font.Gotham
+ToggleESP.TextSize = 18
+ToggleESP.AutoButtonColor = true
+ToggleESP.Parent = Frame
 
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0,28,0,28)
-closeBtn.Position = UDim2.new(1,-36,0,4)
-closeBtn.BackgroundColor3 = Color3.fromRGB(200,60,60)
-closeBtn.Text = "X"
-closeBtn.TextColor3 = Color3.new(1,1,1)
-closeBtn.TextSize = 16
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.Parent = titleBar
-closeBtn.MouseButton1Click:Connect(function()
-    gui.Enabled = not gui.Enabled
-end)
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(1, -20, 0, 30)
+ScrollFrame.Position = UDim2.new(0, 10, 1, -35)
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 1, 0)
+ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.Parent = Frame
 
--- Content scroll
-local contentFrame = Instance.new("Frame")
-contentFrame.Size = UDim2.new(1,0,1,-46)
-contentFrame.Position = UDim2.new(0,0,0,46)
-contentFrame.BackgroundTransparency = 1
-contentFrame.Parent = frame
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Parent = ScrollFrame
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-local scrolling = Instance.new("ScrollingFrame")
-scrolling.Size = UDim2.new(1,-20,1,0)
-scrolling.Position = UDim2.new(0,10,0,0)
-scrolling.BackgroundColor3 = Color3.fromRGB(36,36,36)
-scrolling.BorderSizePixel = 0
-scrolling.ScrollBarThickness = 8
-scrolling.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scrolling.Parent = contentFrame
+-- ESP logic
+local espEnabled = false
+local highlights = {}
 
-local uiList = Instance.new("UIListLayout")
-uiList.SortOrder = Enum.SortOrder.LayoutOrder
-uiList.Padding = UDim.new(0,8)
-uiList.Parent = scrolling
-
--- ---------- DRAG ----------
-local dragging = false
-local dragStart = Vector3.new()
-local startPos = UDim2.new()
-
-titleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = frame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
-        end)
+local function clearESP()
+    for _,h in ipairs(highlights) do
+        if h and h.Parent then
+            h:Destroy()
+        end
     end
-end)
+    highlights = {}
+end
 
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        local newX = startPos.X.Offset + delta.X
-        local newY = startPos.Y.Offset + delta.Y
-        local screen = workspace.CurrentCamera.ViewportSize
-        newX = math.clamp(newX,0,screen.X - frame.AbsoluteSize.X)
-        newY = math.clamp(newY,0,screen.Y - frame.AbsoluteSize.Y)
-        frame.Position = UDim2.new(0,newX,0,newY)
+local function scanAndHighlight()
+    clearESP()
+    ScrollFrame:ClearAllChildren()
+    UIListLayout.Parent = ScrollFrame -- reparent after clear
+    for _,obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
+            local highlight = Instance.new("Highlight")
+            highlight.Adornee = obj
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.FillColor = obj.Name == "Brainrot" and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0,255,0)
+            highlight.OutlineColor = Color3.new(1,1,1)
+            highlight.Parent = obj
+            table.insert(highlights, highlight)
+
+            -- Add label to scrollframe
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1,0,0,20)
+            label.BackgroundTransparency = 1
+            label.TextColor3 = highlight.FillColor
+            label.Text = obj.Name.." - "..obj:GetFullName()
+            label.Font = Enum.Font.Gotham
+            label.TextSize = 13
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.LayoutOrder = #highlights
+            label.Parent = ScrollFrame
+        end
     end
-end)
-
--- ---------- TELEPORT + ESP ----------
-local TeleportAndESP_Enabled = false
-local ESP_GUIs = {}
-
-local function createESP(p)
-    if p == player then return end
-    local char = p.Character
-    if not char then return end
-    local head = char:FindFirstChild("Head")
-    if not head or head:FindFirstChild("ESP") then return end
-    local guiBill = Instance.new("BillboardGui")
-    guiBill.Name = "ESP"
-    guiBill.Adornee = head
-    guiBill.Size = UDim2.new(0,160,0,40)
-    guiBill.StudsOffset = Vector3.new(0,1.5,0)
-    guiBill.AlwaysOnTop = true
-    guiBill.Parent = head
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1,0,1,0)
-    label.BackgroundTransparency = 1
-    label.Font = Enum.Font.GothamBold
-    label.TextSize = 14
-    label.TextColor3 = Color3.fromRGB(255,50,50)
-    label.Text = p.Name
-    label.Parent = guiBill
-    ESP_GUIs[p] = guiBill
 end
 
-local function removeESP()
-    for _,g in pairs(ESP_GUIs) do if g and g.Parent then g:Destroy() end end
-    ESP_GUIs = {}
-end
-
-local function enableESP()
-    for _,p in pairs(Players:GetPlayers()) do
-        if p.Character then createESP(p) end
-        p.CharacterAdded:Connect(createESP)
-    end
-    Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(createESP) end)
-end
-
-local function teleportBase()
-    local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate") or workspace:FindFirstChildOfClass("SpawnLocation")
-    if not base then return end
-    local char = player.Character
-    if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    if not root then return end
-    root.CFrame = CFrame.new(base.Position.X, base.Position.Y + base.Size.Y/2 + 5, base.Position.Z)
-end
-
--- ---------- BUTTONS ----------
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(1,0,0,40)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(68,68,255)
-toggleBtn.Text = "Enable Teleport + ESP"
-toggleBtn.TextColor3 = Color3.new(1,1,1)
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 16
-toggleBtn.LayoutOrder = 1
-toggleBtn.Parent = scrolling
-
-toggleBtn.MouseButton1Click:Connect(function()
-    TeleportAndESP_Enabled = not TeleportAndESP_Enabled
-    if TeleportAndESP_Enabled then
-        teleportBase()
-        enableESP()
-        toggleBtn.Text = "Disable Teleport + ESP"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(80,220,90)
+-- Toggle ESP on/off
+ToggleESP.MouseButton1Click:Connect(function()
+    espEnabled = not espEnabled
+    if espEnabled then
+        scanAndHighlight()
+        ToggleESP.Text = "Disable ESP"
     else
-        removeESP()
-        toggleBtn.Text = "Enable Teleport + ESP"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(68,68,255)
+        clearESP()
+        ScrollFrame:ClearAllChildren()
+        UIListLayout.Parent = ScrollFrame
+        ToggleESP.Text = "Enable ESP"
     end
 end)
 
--- Example extra buttons
-for i=2,6 do
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1,0,0,36)
-    b.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    b.TextColor3 = Color3.new(1,1,1)
-    b.Font = Enum.Font.Gotham
-    b.TextSize = 14
-    b.Text = "Button "..i
-    b.LayoutOrder = i
-    b.Parent = scrolling
-end
-
--- ---------- AUTO SCALE & KEEP INSIDE VIEWPORT ----------
-local function updateFrameSize()
-    local screen = workspace.CurrentCamera.ViewportSize
-    frame.Size = UDim2.new(0.8 * screen.X,0,0.6 * screen.Y,0)
-    frame.Position = UDim2.new(0.5,0,0.5,0)
-end
-RunService.RenderStepped:Connect(updateFrameSize)
-
-print("CustomMenu fully loaded for player:", player.Name)
+-- Optional: Auto-update ESP when new objects are added/removed
+workspace.DescendantAdded:Connect(function(obj)
+    if espEnabled and obj:IsA("BasePart") and (obj.Name == "Brainrot" or obj.Name == "Base") then
+        scanAndHighlight()
+    end
+end)
+workspace.DescendantRemoving:Connect(function(obj)
+    if espEnabled and (obj.Name == "Brainrot" or obj.Name == "Base") then
+        scanAndHighlight()
+    end
+end)
