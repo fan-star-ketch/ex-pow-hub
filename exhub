@@ -1,7 +1,56 @@
--- Brainrot & Base ESP with Draggable UI (Loadable/Executor Version)
--- You can run this with: loadstring(game:HttpGet("https://raw.githubusercontent.com/fan-star-ketch/ex-pow-hub/main/exhub"))()
--- If your executor & game allows GUIs, this will work in-game (not just Studio).
+-- Steal a Brainrot: Teleport + All Players ESP + Brainrot/Base ESP UI
 
+-- Teleport above base
+local player = game.Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+local root = char:WaitForChild("HumanoidRootPart")
+
+repeat task.wait() until workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
+local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate")
+if base then
+    local y = base.Position.Y + (base.Size.Y / 2) + 5
+    root.Anchored = true
+    root.CFrame = CFrame.new(base.Position.X, y, base.Position.Z)
+    task.wait(0.5)
+    root.Anchored = false
+end
+
+-- ESP for all players
+local function addPlayerESP(p)
+    if p == player then return end
+    local function espChar(char)
+        local hrp = char:FindFirstChild("Head")
+        if hrp and not hrp:FindFirstChild("ESP") then
+            local gui = Instance.new("BillboardGui")
+            gui.Name = "ESP"
+            gui.Adornee = hrp
+            gui.Size = UDim2.new(0,200,0,50)
+            gui.StudsOffset = Vector3.new(0,2,0)
+            gui.AlwaysOnTop = true
+            gui.Parent = hrp
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1,0,1,0)
+            lbl.BackgroundTransparency = 1
+            lbl.Font = Enum.Font.SourceSansBold
+            lbl.TextSize = 14
+            lbl.TextColor3 = Color3.new(1,0,0)
+            lbl.Text = p.Name
+            lbl.Parent = gui
+        end
+    end
+    if p.Character then espChar(p.Character) end
+    p.CharacterAdded:Connect(function(c)
+        task.wait(1)
+        espChar(c)
+    end)
+end
+
+for _,p in ipairs(game.Players:GetPlayers()) do
+    addPlayerESP(p)
+end
+game.Players.PlayerAdded:Connect(addPlayerESP)
+
+-- Brainrot/Base ESP with Draggable UI
 local function brainrotESP()
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
