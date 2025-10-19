@@ -164,7 +164,7 @@ local function brainrotESP()
         espEnabled = not espEnabled
         if espEnabled then
             scanAndHighlight()
-            ToggleESP.Text = "Disable ESP"
+            ToggleESP.Text = "Disablee e sex ESP"
         else
             clearESP()
             for _,child in ipairs(ScrollFrame:GetChildren()) do
