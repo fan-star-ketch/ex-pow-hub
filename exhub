@@ -1,22 +1,23 @@
--- FULL MOBILE-FRIENDLY CUSTOM MENU
+-- FULLY MOBILE-FRIENDLY, AUTO-SCALING CUSTOM MENU
+-- Place in StarterPlayerScripts or StarterGui as a LocalScript
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- ---------- GUI ----------
 local gui = Instance.new("ScreenGui")
 gui.Name = "CustomMenu"
+gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = true
 gui.Parent = playerGui
 gui.Enabled = true
 
--- Main frame
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 300, 0, 400)
-frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+frame.Size = UDim2.new(0.8,0,0.6,0) -- auto-scaling relative
+frame.Position = UDim2.new(0.5,0,0.5,0)
 frame.AnchorPoint = Vector2.new(0.5,0.5)
 frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
 frame.BorderSizePixel = 0
@@ -40,7 +41,6 @@ titleLabel.TextColor3 = Color3.fromRGB(230,230,230)
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = titleBar
 
--- Close button
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0,28,0,28)
 closeBtn.Position = UDim2.new(1,-36,0,4)
@@ -79,6 +79,7 @@ uiList.Parent = scrolling
 local dragging = false
 local dragStart = Vector3.new()
 local startPos = UDim2.new()
+
 titleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
@@ -89,21 +90,23 @@ titleBar.InputBegan:Connect(function(input)
         end)
     end
 end)
+
 UserInputService.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         local newX = startPos.X.Offset + delta.X
         local newY = startPos.Y.Offset + delta.Y
         local screen = workspace.CurrentCamera.ViewportSize
-        newX = math.clamp(newX, 0, screen.X - frame.AbsoluteSize.X)
-        newY = math.clamp(newY, 0, screen.Y - frame.AbsoluteSize.Y)
-        frame.Position = UDim2.new(0, newX, 0, newY)
+        newX = math.clamp(newX,0,screen.X - frame.AbsoluteSize.X)
+        newY = math.clamp(newY,0,screen.Y - frame.AbsoluteSize.Y)
+        frame.Position = UDim2.new(0,newX,0,newY)
     end
 end)
 
 -- ---------- TELEPORT + ESP ----------
 local TeleportAndESP_Enabled = false
 local ESP_GUIs = {}
+
 local function createESP(p)
     if p == player then return end
     local char = p.Character
@@ -127,10 +130,12 @@ local function createESP(p)
     label.Parent = guiBill
     ESP_GUIs[p] = guiBill
 end
+
 local function removeESP()
     for _,g in pairs(ESP_GUIs) do if g and g.Parent then g:Destroy() end end
     ESP_GUIs = {}
 end
+
 local function enableESP()
     for _,p in pairs(Players:GetPlayers()) do
         if p.Character then createESP(p) end
@@ -138,6 +143,7 @@ local function enableESP()
     end
     Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(createESP) end)
 end
+
 local function teleportBase()
     local base = workspace:FindFirstChild("Base") or workspace:FindFirstChild("Baseplate") or workspace:FindFirstChildOfClass("SpawnLocation")
     if not base then return end
@@ -173,8 +179,8 @@ toggleBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Optional: example extra buttons
-for i=2,8 do
+-- Example extra buttons
+for i=2,6 do
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(1,0,0,36)
     b.BackgroundColor3 = Color3.fromRGB(50,50,50)
@@ -186,13 +192,12 @@ for i=2,8 do
     b.Parent = scrolling
 end
 
--- Keep inside viewport
-RunService.RenderStepped:Connect(function()
+-- ---------- AUTO SCALE & KEEP INSIDE VIEWPORT ----------
+local function updateFrameSize()
     local screen = workspace.CurrentCamera.ViewportSize
-    frame.Position = UDim2.new(0,
-        math.clamp(frame.Position.X.Offset,0,screen.X - frame.AbsoluteSize.X),
-        0,
-        math.clamp(frame.Position.Y.Offset,0,screen.Y - frame.AbsoluteSize.Y))
-end)
+    frame.Size = UDim2.new(0.8 * screen.X,0,0.6 * screen.Y,0)
+    frame.Position = UDim2.new(0.5,0,0.5,0)
+end
+RunService.RenderStepped:Connect(updateFrameSize)
 
-print("CustomMenu fully loaded for:", player.Name)
+print("CustomMenu fully loaded for player:", player.Name)
