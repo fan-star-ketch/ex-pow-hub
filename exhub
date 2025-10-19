@@ -84,7 +84,7 @@ local function brainrotESP()
     Frame.Parent = ScreenGui
 
     local Title = Instance.new("TextLabel")
-    Title.Text = "Brainrot ESP Menu"
+    Title.Text = "Brainrot ESP Menu fuck niggers"
     Title.Size = UDim2.new(1,0,0,30)
     Title.BackgroundTransparency = 1
     Title.TextColor3 = Color3.new(1,1,1)
